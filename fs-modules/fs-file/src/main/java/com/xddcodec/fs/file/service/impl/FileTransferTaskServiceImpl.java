@@ -24,6 +24,7 @@ import com.xddcodec.fs.file.mapper.FileTransferTaskMapper;
 import com.xddcodec.fs.file.service.FileInfoService;
 import com.xddcodec.fs.file.service.FileTransferTaskService;
 import com.xddcodec.fs.file.enums.TransferTaskStatus;
+import com.xddcodec.fs.framework.common.constant.CommonConstant;
 import com.xddcodec.fs.framework.common.context.WorkspaceContext;
 import com.xddcodec.fs.framework.common.exception.BusinessException;
 import com.xddcodec.fs.framework.common.exception.StorageOperationException;
@@ -193,7 +194,7 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
                     workspaceId,
                     cmd.getParentId(),
                     cmd.getFileName(),
-                    false,
+                    CommonConstant.N,
                     null,
                     storagePlatformSettingId
             );
@@ -257,7 +258,7 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
             String workspaceId = WorkspaceContext.getWorkspaceId();
             queryWrapper.where(FILE_INFO.CONTENT_MD5.eq(cmd.getFileMd5())
                     .and(FILE_INFO.WORKSPACE_ID.eq(workspaceId))
-                    .and(FILE_INFO.IS_DELETED.eq(false)));
+                    .and(FILE_INFO.IS_DELETED.eq(CommonConstant.N)));
             if (StringUtils.isEmpty(storagePlatformSettingId)) {
                 queryWrapper.and(FILE_INFO.STORAGE_PLATFORM_SETTING_ID.isNull());
             } else {
@@ -341,7 +342,7 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
                     task.getWorkspaceId(),
                     task.getParentId(),
                     task.getFileName(),
-                    false,
+                    CommonConstant.N,
                     null,
                     storagePlatformSettingId
             );
@@ -353,7 +354,7 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
             newFileInfo.setSuffix(task.getSuffix());
             newFileInfo.setSize(task.getFileSize());
             newFileInfo.setMimeType(task.getMimeType());
-            newFileInfo.setIsDir(false);
+            newFileInfo.setIsDir(CommonConstant.N);
             newFileInfo.setParentId(task.getParentId());
             newFileInfo.setWorkspaceId(task.getWorkspaceId());
             newFileInfo.setUserId(task.getUserId());
@@ -361,7 +362,7 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
             newFileInfo.setStoragePlatformSettingId(task.getStoragePlatformSettingId());
             newFileInfo.setUploadTime(now);
             newFileInfo.setUpdateTime(now);
-            newFileInfo.setIsDeleted(false);
+            newFileInfo.setIsDeleted(CommonConstant.N);
 
             fileInfoService.save(newFileInfo);
 
@@ -779,7 +780,7 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
             fileInfo.setSuffix(task.getSuffix());
             fileInfo.setSize(task.getFileSize());
             fileInfo.setMimeType(task.getMimeType());
-            fileInfo.setIsDir(false);
+            fileInfo.setIsDir(CommonConstant.N);
             fileInfo.setParentId(task.getParentId());
             fileInfo.setWorkspaceId(task.getWorkspaceId());
             fileInfo.setUserId(task.getUserId());
@@ -787,7 +788,7 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
             fileInfo.setStoragePlatformSettingId(task.getStoragePlatformSettingId());
             fileInfo.setUploadTime(completeTime);
             fileInfo.setUpdateTime(completeTime);
-            fileInfo.setIsDeleted(false);
+            fileInfo.setIsDeleted(CommonConstant.N);
 
             fileInfoService.save(fileInfo);
 

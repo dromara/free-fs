@@ -54,10 +54,10 @@ spring:
     #编码集
     default-encoding: UTF-8
     #发送邮件的账户
-    username: dh_freedom@qq.com
-    form: Free-Fs <dh_freedom@qq.com>
+    username: 3128788868@qq.com
+    form: Free-Fs <3128788868@qq.com>
     #授权码
-    password: xxxxxxxxxxxx
+    password: ${MAIL_PASSWORD:}
     properties:
       mail:
         smtp:

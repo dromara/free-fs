@@ -1,9 +1,9 @@
 spring:
   datasource:
     type: com.zaxxer.hikari.HikariDataSource
-    url: jdbc:mysql://192.168.199.20:3306/free-fs?useUnicode=true&characterEncoding=UTF-8&autoReconnect=true&useSSL=false&zeroDateTimeBehavior=convertToNull&serverTimezone=Asia/Shanghai
+    url: jdbc:mysql://192.168.85.128:3306/free-fs?useUnicode=true&characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&useSSL=true&serverTimezone=GMT%2B8&autoReconnect=true&rewriteBatchedStatements=true
     username: root
-    password: root
+    password: Lwz102466
     driver-class-name: com.mysql.cj.jdbc.Driver
     # postgresql数据库配置
     #    url: jdbc:postgresql://192.168.199.20:5432/free-fs?useUnicode=true&characterEncoding=utf8&useSSL=true&autoReconnect=true&reWriteBatchedInserts=true
@@ -30,9 +30,9 @@ spring:
       keepaliveTime: 30000
   data:
     redis:
-      host: 192.168.199.20
+      host: 192.168.85.128
       port: 6379
-      password: 123456
+      password: Lwz102466
       database: 0
       # 连接超时时间
       timeout: 10s
@@ -46,6 +46,23 @@ spring:
           max-idle: 10
           # 连接池中的最小空闲连接
           min-idle: 0
+  mail:
+    host: smtp.qq.com
+    username: 3128788868@qq.com
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+            required: true
+          ssl:
+            enable: true
+            socketFactory:
+              port: 465
+              class: javax.net.ssl.SSLSocketFactory
+    default-encoding: utf-8
   cache:
     # 缓存类型 redis、none(不使用缓存)
     type: redis
@@ -58,11 +75,11 @@ spring:
 fs:
   # 前端地址
   frontend:
-    domain: ${FS_FRONTEND_DOMAIN:http://localhost:5173}
+    domain: ${FS_FRONTEND_DOMAIN:http://192.168.85.128:5173}
   # 预览配置
   preview:
     # 预览文件流处理地址，默认是本服务地址,端口号
-    stream-api: http://192.168.199.20:8080/api/file/stream/preview
+    stream-api: http://192.168.85.128:8080/api/file/stream/preview
     # 预览文件最大大小（字节），默认500MB
     max-file-size: 524288000
     # 单次Range请求最大大小（字节），默认10MB
@@ -89,7 +106,7 @@ fs:
   storage:
     local:
       base-path: /data/upload
-      base-url: http://192.168.199.20:8080/files
+      base-url: http://192.168.85.128:8080/files
 
 mybatis-flex:
   # sql审计

@@ -11,6 +11,7 @@ import com.xddcodec.fs.file.domain.qry.TransferFilesQry;
 import com.xddcodec.fs.file.domain.vo.CheckUploadResultVO;
 import com.xddcodec.fs.file.domain.vo.FileDownloadVO;
 import com.xddcodec.fs.file.domain.vo.FileTransferTaskVO;
+import com.xddcodec.fs.file.domain.vo.FolderDownloadTaskVO;
 import com.xddcodec.fs.file.domain.vo.InitDownloadResultVO;
 
 import java.io.InputStream;
@@ -98,6 +99,30 @@ public interface FileTransferTaskService extends IService<FileTransferTask> {
      * @return
      */
     FileDownloadVO downloadFile(String fileId);
+
+    /**
+     * 创建文件夹下载打包任务
+     *
+     * @param folderId 文件夹ID
+     * @return 任务进度
+     */
+    FolderDownloadTaskVO createFolderDownloadTask(String folderId);
+
+    /**
+     * 查询文件夹下载打包任务进度
+     *
+     * @param taskId 任务ID
+     * @return 任务进度
+     */
+    FolderDownloadTaskVO getFolderDownloadTask(String taskId);
+
+    /**
+     * 下载已完成的文件夹压缩包
+     *
+     * @param taskId 任务ID
+     * @return 下载文件
+     */
+    FileDownloadVO downloadFolderTaskFile(String taskId);
 
     /**
      * 初始化下载任务

@@ -16,8 +16,8 @@ spring:
     date-format: yyyy-MM-dd HH:mm:ss
   servlet:
     multipart:
-      max-file-size: 500MB
-      max-request-size: 500MB
+      max-file-size: -1
+      max-request-size: -1
   web:
     resources:
       # 添加静态资源位置

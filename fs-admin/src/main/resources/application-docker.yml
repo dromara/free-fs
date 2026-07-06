@@ -75,13 +75,13 @@ spring:
 fs:
   # 前端地址
   frontend:
-    domain: ${FS_FRONTEND_DOMAIN:http://192.168.85.128:5173}
+    domain: ${FS_FRONTEND_DOMAIN:http://192.168.30.50:8080}
   # 预览配置
   preview:
     # 预览文件流处理地址，默认是本服务地址,端口号
-    stream-api: http://192.168.85.128:8080/api/file/stream/preview
+    stream-api: http://192.168.30.50:8080/api/file/stream/preview
     # 预览文件最大大小（字节），默认500MB
-    max-file-size: 524288000
+    max-file-size: -1
     # 单次Range请求最大大小（字节），默认10MB
     # 用于视频/音频的分片传输，防止内存溢出
     max-range-size: 10485760
@@ -106,7 +106,7 @@ fs:
   storage:
     local:
       base-path: /data/upload
-      base-url: http://192.168.85.128:8080/files
+      base-url: http://192.168.30.50:8080/files
 
 mybatis-flex:
   # sql审计

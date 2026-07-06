@@ -33,10 +33,11 @@ public class PreviewService {
             return buildErrorPage(model, I18nUtils.getMessage("file.not.found"), I18nUtils.getMessage("file.not.exist.or.deleted"));
         }
 
-        if (fileInfo.getSize() > previewConfig.getMaxFileSize()) {
+        Long maxFileSize = previewConfig.getMaxFileSize();
+        if (maxFileSize != null && maxFileSize > 0 && fileInfo.getSize() > maxFileSize) {
             return buildErrorPage(model, I18nUtils.getMessage("file.too.large"),
                     I18nUtils.getMessage("file.size.limit.exceeded", 
-                            new Object[]{previewConfig.getMaxFileSize() / 1024 / 1024}));
+                            new Object[]{maxFileSize / 1024 / 1024}));
         }
 
         FileTypeEnum fileType = FileTypeEnum.fromFileName(fileInfo.getDisplayName());

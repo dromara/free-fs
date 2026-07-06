@@ -10,6 +10,7 @@ import com.xddcodec.fs.file.domain.qry.TransferFilesQry;
 import com.xddcodec.fs.file.domain.vo.CheckUploadResultVO;
 import com.xddcodec.fs.file.domain.vo.FileDownloadVO;
 import com.xddcodec.fs.file.domain.vo.FileTransferTaskVO;
+import com.xddcodec.fs.file.domain.vo.FolderDownloadTaskVO;
 import com.xddcodec.fs.file.domain.vo.InitDownloadResultVO;
 import com.xddcodec.fs.file.service.FileTransferTaskService;
 import com.xddcodec.fs.framework.common.domain.Result;
@@ -215,6 +216,40 @@ public class FileTransferController {
                     .body(fileDownload.getResource());
         } catch (Exception e) {
             throw new RuntimeException("文件下载失败", e);
+        }
+    }
+
+    @PostMapping("/folder-download/tasks/{folderId}")
+    @Operation(summary = "创建文件夹下载任务", description = "异步打包文件夹，并返回打包进度")
+    public Result<FolderDownloadTaskVO> createFolderDownloadTask(@PathVariable String folderId) {
+        FolderDownloadTaskVO result = fileTransferTaskService.createFolderDownloadTask(folderId);
+        return Result.ok(result, "文件夹下载任务已创建");
+    }
+
+    @GetMapping("/folder-download/tasks/{taskId}")
+    @Operation(summary = "查询文件夹下载任务进度", description = "查询文件夹打包进度")
+    public Result<FolderDownloadTaskVO> getFolderDownloadTask(@PathVariable String taskId) {
+        FolderDownloadTaskVO result = fileTransferTaskService.getFolderDownloadTask(taskId);
+        return Result.ok(result);
+    }
+
+    @GetMapping("/folder-download/tasks/{taskId}/file")
+    @Operation(summary = "下载文件夹压缩包", description = "下载已打包完成的文件夹 zip")
+    public ResponseEntity<Resource> downloadFolderTaskFile(@PathVariable String taskId) {
+        try {
+            FileDownloadVO fileDownload = fileTransferTaskService.downloadFolderTaskFile(taskId);
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.add(HttpHeaders.CONTENT_DISPOSITION,
+                    "attachment; filename=\"" + URLEncoder.encode(fileDownload.getFileName(), StandardCharsets.UTF_8) + "\"");
+            headers.add(HttpHeaders.CONTENT_TYPE, "application/zip");
+
+            return ResponseEntity.ok()
+                    .headers(headers)
+                    .contentLength(fileDownload.getFileSize())
+                    .body(fileDownload.getResource());
+        } catch (Exception e) {
+            throw new RuntimeException("文件夹下载失败", e);
         }
     }
 }

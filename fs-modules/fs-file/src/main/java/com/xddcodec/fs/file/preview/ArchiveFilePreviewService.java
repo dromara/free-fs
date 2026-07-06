@@ -87,7 +87,7 @@ public class ArchiveFilePreviewService {
             }
 
             Long maxFileSize = previewConfig.getMaxFileSize();
-            if (maxFileSize != null && fileContent.length > maxFileSize) {
+            if (maxFileSize != null && maxFileSize > 0 && fileContent.length > maxFileSize) {
                 return buildErrorPage(model, I18nUtils.getMessage("file.too.large"),
                         I18nUtils.getMessage("file.size.limit.exceeded", 
                                 new Object[]{maxFileSize / 1024 / 1024}));

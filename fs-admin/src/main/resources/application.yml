@@ -11,6 +11,10 @@ spring:
     name: free-fs
   profiles:
     active: dev
+  mvc:
+    async:
+      # Office 转 PDF 最长等待约 335 秒，避免提前关闭对象存储文件流
+      request-timeout: 360s
   jackson:
     time-zone: GMT+8
     date-format: yyyy-MM-dd HH:mm:ss

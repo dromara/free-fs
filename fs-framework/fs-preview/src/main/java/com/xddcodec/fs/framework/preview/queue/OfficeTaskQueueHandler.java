@@ -26,14 +26,16 @@ public class OfficeTaskQueueHandler {
 
     private final BlockingQueue<OfficeConvertTask> queue = new LinkedBlockingQueue<>(100);
 
-    private final ExecutorService consumer = Executors.newVirtualThreadPerTaskExecutor();
+    private final ExecutorService consumer = Executors.newSingleThreadExecutor(
+            Thread.ofPlatform()
+                    .name("office-worker")
+                    .daemon(true)
+                    .factory()
+    );
 
     @PostConstruct
     void startConsumer() {
-        // 虚拟线程不需要预启动一个死循环，
-        // 因为虚拟线程的初衷是“随用随建，用完即毁”。
-        // 但如果你想维持原来的“单消费”逻辑，只需提交一次循环任务：
-        Thread.ofVirtual().name("office-vt-worker").start(this::consumeLoop);
+        consumer.execute(this::consumeLoop);
     }
 
     private void consumeLoop() {

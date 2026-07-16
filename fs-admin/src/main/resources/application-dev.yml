@@ -80,7 +80,7 @@ fs:
       # Windows: C:/Program Files/LibreOffice
       # Mac: /Applications/LibreOffice.app/Contents
 #      office-home: C:/Program Files/LibreOffice
-      task-execution-timeout: 120000
+      task-execution-timeout: 300000
       task-queue-timeout: 30000
       max-tasks-per-process: 200
       cache-path: ${java.io.tmpdir}/office-convert

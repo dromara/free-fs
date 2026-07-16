@@ -538,15 +538,16 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
             applyFileTypeFilter(wrapper, qry);
 
             // 排序逻辑
-            String orderByField = StrUtil.toUnderlineCase(qry.getOrderBy());
+            String orderByField = switch (String.valueOf(qry.getOrderBy())) {
+                case "displayName" -> "display_name";
+                case "suffix" -> "suffix";
+                case "size" -> "size";
+                default -> "update_time";
+            };
             boolean isAsc = "ASC".equalsIgnoreCase(qry.getOrderDirection());
 
             wrapper.orderBy(FILE_INFO.IS_DIR.desc())
-                    .orderBy(FILE_INFO.UPDATE_TIME.desc());
-
-            if (StrUtil.isNotBlank(orderByField)) {
-                wrapper.orderBy(orderByField, isAsc);
-            }
+                    .orderBy(orderByField, isAsc);
         }
 
         // 执行分页查询 (使用 listAs 直接映射到 VO)

@@ -120,8 +120,8 @@ public class FileStreamController {
         final long contentLength = finalEnd - finalStart + 1;
 
         StreamingResponseBody stream = outputStream -> {
-            try (InputStream inputStream = storage.getFileStream(fileInfo.getObjectKey())) {
-                skipBytes(inputStream, finalStart);
+            try (InputStream inputStream = storage.downloadFileRange(
+                    fileInfo.getObjectKey(), finalStart, finalEnd)) {
                 copyStreamLimited(inputStream, outputStream, contentLength);
             } catch (IOException e) {
                 log.debug("Range流传输中断: {}", fileInfo.getDisplayName());
@@ -239,21 +239,6 @@ public class FileStreamController {
         }
 
         return headers;
-    }
-
-    private void skipBytes(InputStream in, long skipCount) throws IOException {
-        if (skipCount <= 0) return;
-
-        long remaining = skipCount;
-        while (remaining > 0) {
-            long skipped = in.skip(remaining);
-            if (skipped == 0) {
-                if (in.read() == -1) throw new IOException("无法跳过指定字节数");
-                remaining--;
-            } else {
-                remaining -= skipped;
-            }
-        }
     }
 
     private void copyStream(InputStream in, OutputStream out) throws IOException {

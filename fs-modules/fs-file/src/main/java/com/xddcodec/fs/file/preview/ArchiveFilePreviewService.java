@@ -111,7 +111,7 @@ public class ArchiveFilePreviewService {
             String streamAccessToken = UUID.randomUUID().toString().replace("-", "");
             redisRepository.setExpire(RedisKey.getPreviewTokenKey(streamAccessToken), tempId, CACHE_EXPIRE_SECONDS);
 
-            String streamUrl = previewConfig.getStreamApi() + "/archive/inner/" + tempId
+            String streamUrl = "/api/file/stream/preview/archive/inner/" + tempId
                     + "?previewToken=" + streamAccessToken;
 
             PreviewContext context = PreviewContext.builder()

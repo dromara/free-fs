@@ -20,6 +20,8 @@ import java.time.LocalDateTime;
 @Service
 @RequiredArgsConstructor
 public class PreviewService {
+    private static final String BROWSER_PREVIEW_STREAM_PATH = "/api/file/stream/preview";
+
     private final FileInfoService fileInfoService;
     private final PreviewStrategyManager strategyManager;
     private final FilePreviewConfig previewConfig;
@@ -50,7 +52,7 @@ public class PreviewService {
         PreviewContext context = PreviewContext.builder()
                 .fileId(fileId)
                 .fileName(fileInfo.getDisplayName())
-                .streamUrl(previewConfig.getStreamApi() + "/" + fileId)
+                .streamUrl(BROWSER_PREVIEW_STREAM_PATH + "/" + fileId)
                 .fileSize(fileInfo.getSize())
                 .extension(fileInfo.getSuffix())
                 .fileType(fileType)

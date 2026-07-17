@@ -9,6 +9,7 @@ import com.xddcodec.fs.file.domain.vo.FileDownloadVO;
 import com.xddcodec.fs.file.domain.vo.FileShareThinVO;
 import com.xddcodec.fs.file.domain.vo.FileShareVO;
 import com.xddcodec.fs.file.domain.vo.FileVO;
+import com.xddcodec.fs.file.domain.vo.FolderDownloadTaskVO;
 import com.xddcodec.fs.framework.common.domain.PageResult;
 
 import java.util.List;
@@ -87,4 +88,19 @@ public interface FileShareService extends IService<FileShare> {
      * @param fileId  文件id
      */
     FileDownloadVO downloadFiles(String shareId, String fileId);
+
+    /**
+     * 创建分享文件夹下载任务
+     */
+    FolderDownloadTaskVO createFolderDownloadTask(String shareId, String folderId);
+
+    /**
+     * 查询分享文件夹下载任务
+     */
+    FolderDownloadTaskVO getFolderDownloadTask(String shareId, String taskId);
+
+    /**
+     * 下载分享文件夹压缩包
+     */
+    FileDownloadVO downloadFolderTaskFile(String shareId, String taskId);
 }

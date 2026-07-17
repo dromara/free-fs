@@ -122,4 +122,37 @@ public class FileShareController {
             throw new RuntimeException("文件下载失败", e);
         }
     }
+
+    @PostMapping("/{shareId}/folder-download/tasks/{folderId}")
+    @Operation(summary = "创建分享文件夹下载任务", description = "异步打包分享内文件夹")
+    public Result<FolderDownloadTaskVO> createFolderDownloadTask(@PathVariable String shareId,
+                                                                  @PathVariable String folderId) {
+        return Result.ok(fileShareService.createFolderDownloadTask(shareId, folderId));
+    }
+
+    @GetMapping("/{shareId}/folder-download/tasks/{taskId}")
+    @Operation(summary = "查询分享文件夹下载任务", description = "查询分享文件夹打包进度")
+    public Result<FolderDownloadTaskVO> getFolderDownloadTask(@PathVariable String shareId,
+                                                               @PathVariable String taskId) {
+        return Result.ok(fileShareService.getFolderDownloadTask(shareId, taskId));
+    }
+
+    @GetMapping("/{shareId}/folder-download/tasks/{taskId}/file")
+    @Operation(summary = "下载分享文件夹压缩包", description = "下载已打包完成的分享文件夹 zip")
+    public ResponseEntity<Resource> downloadFolderTaskFile(@PathVariable String shareId,
+                                                            @PathVariable String taskId) {
+        try {
+            FileDownloadVO fileDownload = fileShareService.downloadFolderTaskFile(shareId, taskId);
+            HttpHeaders headers = new HttpHeaders();
+            headers.add(HttpHeaders.CONTENT_DISPOSITION,
+                    "attachment; filename=\"" + URLEncoder.encode(fileDownload.getFileName(), StandardCharsets.UTF_8) + "\"");
+            headers.add(HttpHeaders.CONTENT_TYPE, "application/zip");
+            return ResponseEntity.ok()
+                    .headers(headers)
+                    .contentLength(fileDownload.getFileSize())
+                    .body(fileDownload.getResource());
+        } catch (Exception e) {
+            throw new RuntimeException("分享文件夹下载失败", e);
+        }
+    }
 }

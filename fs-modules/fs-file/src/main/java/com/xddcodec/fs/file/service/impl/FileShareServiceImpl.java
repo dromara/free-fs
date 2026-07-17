@@ -19,10 +19,12 @@ import com.xddcodec.fs.file.domain.vo.FileDownloadVO;
 import com.xddcodec.fs.file.domain.vo.FileShareThinVO;
 import com.xddcodec.fs.file.domain.vo.FileShareVO;
 import com.xddcodec.fs.file.domain.vo.FileVO;
+import com.xddcodec.fs.file.domain.vo.FolderDownloadTaskVO;
 import com.xddcodec.fs.file.mapper.FileShareMapper;
 import com.xddcodec.fs.file.service.FileInfoService;
 import com.xddcodec.fs.file.service.FileShareItemService;
 import com.xddcodec.fs.file.service.FileShareService;
+import com.xddcodec.fs.file.service.FileTransferTaskService;
 import com.xddcodec.fs.framework.common.context.WorkspaceContext;
 import com.xddcodec.fs.framework.common.domain.PageResult;
 import com.xddcodec.fs.framework.common.exception.BusinessException;
@@ -62,6 +64,8 @@ public class FileShareServiceImpl extends ServiceImpl<FileShareMapper, FileShare
     private final FileInfoService fileInfoService;
 
     private final FileShareItemService fileShareItemService;
+
+    private final FileTransferTaskService fileTransferTaskService;
 
     private final Converter converter;
 
@@ -287,11 +291,7 @@ public class FileShareServiceImpl extends ServiceImpl<FileShareMapper, FileShare
 
     @Override
     public List<FileVO> getShareFileItems(String shareId, String parentId) {
-        FileShare fileShare = this.getById(shareId);
-        if (fileShare == null) {
-            throw new BusinessException(I18nUtils.getMessage("share.not.exist.or.deleted"));
-        }
-        validateShareNotExpired(fileShare);
+        FileShare fileShare = getValidShare(shareId);
 
         List<String> shareFileIds = fileShareItemService.getShareFileIds(shareId);
         List<FileInfo> fileInfos;
@@ -328,11 +328,7 @@ public class FileShareServiceImpl extends ServiceImpl<FileShareMapper, FileShare
 
     @Override
     public FileDownloadVO downloadFiles(String shareId, String fileId) {
-        FileShare fileShare = this.getById(shareId);
-        if (fileShare == null) {
-            throw new BusinessException(I18nUtils.getMessage("share.not.exist.or.deleted"));
-        }
-        validateShareNotExpired(fileShare);
+        FileShare fileShare = getValidShare(shareId);
         List<String> shareFileIds = fileShareItemService.getShareFileIds(shareId);
         FileInfo fileInfo = getShareAccessibleFile(fileShare, shareFileIds, fileId);
 
@@ -351,6 +347,44 @@ public class FileShareServiceImpl extends ServiceImpl<FileShareMapper, FileShare
         downloadVO.setFileSize(fileInfo.getSize());
         downloadVO.setResource(resource);
         return downloadVO;
+    }
+
+    @Override
+    public FolderDownloadTaskVO createFolderDownloadTask(String shareId, String folderId) {
+        FileShare fileShare = getValidShare(shareId);
+        List<String> shareFileIds = fileShareItemService.getShareFileIds(shareId);
+        FileInfo folder = getShareAccessibleFile(fileShare, shareFileIds, folderId);
+        if (!Boolean.TRUE.equals(folder.getIsDir())) {
+            throw new BusinessException(I18nUtils.getMessage("file.not.directory"));
+        }
+        return fileTransferTaskService.createFolderDownloadTask(folderId);
+    }
+
+    @Override
+    public FolderDownloadTaskVO getFolderDownloadTask(String shareId, String taskId) {
+        FileShare fileShare = getValidShare(shareId);
+        FolderDownloadTaskVO task = fileTransferTaskService.getFolderDownloadTask(taskId);
+        List<String> shareFileIds = fileShareItemService.getShareFileIds(shareId);
+        getShareAccessibleFile(fileShare, shareFileIds, task.getFolderId());
+        return task;
+    }
+
+    @Override
+    public FileDownloadVO downloadFolderTaskFile(String shareId, String taskId) {
+        FileShare fileShare = getValidShare(shareId);
+        FolderDownloadTaskVO task = fileTransferTaskService.getFolderDownloadTask(taskId);
+        List<String> shareFileIds = fileShareItemService.getShareFileIds(shareId);
+        getShareAccessibleFile(fileShare, shareFileIds, task.getFolderId());
+        return fileTransferTaskService.downloadFolderTaskFile(taskId);
+    }
+
+    private FileShare getValidShare(String shareId) {
+        FileShare fileShare = this.getById(shareId);
+        if (fileShare == null) {
+            throw new BusinessException(I18nUtils.getMessage("share.not.exist.or.deleted"));
+        }
+        validateShareNotExpired(fileShare);
+        return fileShare;
     }
 
     private FileInfo getShareAccessibleFile(FileShare share, List<String> shareFileIds, String fileId) {

@@ -31,6 +31,8 @@ CREATE TABLE "file_info" (
                              PRIMARY KEY ("id")
 );
 CREATE INDEX "idx_workspace_query" ON "file_info" ("workspace_id", "user_id", "is_deleted", "parent_id");
+CREATE INDEX "idx_file_content_dedup" ON "file_info" ("storage_platform_setting_id", "content_md5", "size", "is_dir");
+CREATE INDEX "idx_file_object_reference" ON "file_info" ("storage_platform_setting_id", "object_key");
 
 -- 2. file_share_access_record
 DROP TABLE IF EXISTS "file_share_access_record";

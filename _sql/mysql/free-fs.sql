@@ -19,7 +19,7 @@ CREATE TABLE `file_info`  (
   `is_dir` tinyint(1) NOT NULL COMMENT '是否目录',
   `parent_id` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL DEFAULT NULL COMMENT '父节点ID',
   `user_id` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT '用户id',
-  `content_md5` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL COMMENT '用于秒传和文件校验',
+  `content_md5` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL DEFAULT NULL COMMENT '用于秒传和文件校验',
   `storage_platform_setting_id` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL DEFAULT NULL COMMENT '存储平台标识符',
   `upload_time` datetime NOT NULL COMMENT '上传时间',
   `update_time` datetime NULL DEFAULT NULL COMMENT '修改时间',
@@ -27,7 +27,9 @@ CREATE TABLE `file_info`  (
   `is_deleted` tinyint(1) NULL DEFAULT NULL COMMENT '软删除标记，回收站标识0：未删除 1：已删除',
   `deleted_time` datetime NULL DEFAULT NULL COMMENT '删除时间',
   PRIMARY KEY (`id`) USING BTREE,
-  INDEX `idx_recycle_query`(`user_id` ASC, `storage_platform_setting_id` ASC, `is_deleted` ASC, `parent_id` ASC) USING BTREE
+  INDEX `idx_recycle_query`(`user_id` ASC, `storage_platform_setting_id` ASC, `is_deleted` ASC, `parent_id` ASC) USING BTREE,
+  INDEX `idx_file_content_dedup`(`storage_platform_setting_id` ASC, `content_md5` ASC, `size` ASC, `is_dir` ASC) USING BTREE,
+  INDEX `idx_file_object_reference`(`storage_platform_setting_id` ASC, `object_key` ASC) USING BTREE
 ) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci COMMENT = '文件资源表' ROW_FORMAT = DYNAMIC;
 
 -- ----------------------------

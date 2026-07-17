@@ -4,10 +4,12 @@ import com.xddcodec.fs.framework.common.utils.JsonUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
 
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -22,6 +24,13 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 @Component
 public class RedisRepository {
+
+    private static final DefaultRedisScript<Long> COMPARE_AND_DELETE_SCRIPT =
+            new DefaultRedisScript<>(
+                    "if redis.call('get', KEYS[1]) == ARGV[1] then " +
+                            "return redis.call('del', KEYS[1]) else return 0 end",
+                    Long.class
+            );
 
     @Autowired
     private final RedisTemplate<String, Object> redisTemplate;
@@ -169,6 +178,23 @@ public class RedisRepository {
             }
         } catch (Exception e) {
             e.printStackTrace();
+            return false;
+        }
+    }
+
+    /**
+     * 仅当缓存值与期望值一致时删除，用于安全释放分布式锁。
+     */
+    public boolean compareAndDelete(String key, Object expectedValue) {
+        try {
+            Long result = redisTemplate.execute(
+                    COMPARE_AND_DELETE_SCRIPT,
+                    Collections.singletonList(key),
+                    expectedValue
+            );
+            return result != null && result > 0;
+        } catch (Exception e) {
+            log.error("比较并删除 Redis key 失败: key={}", key, e);
             return false;
         }
     }

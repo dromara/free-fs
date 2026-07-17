@@ -11,6 +11,7 @@ import com.xddcodec.fs.file.domain.qry.FileRecycleQry;
 import com.xddcodec.fs.file.domain.table.FileInfoTableDef;
 import com.xddcodec.fs.file.domain.vo.FileRecycleVO;
 import com.xddcodec.fs.file.service.FileInfoService;
+import com.xddcodec.fs.file.service.FileObjectReferenceService;
 import com.xddcodec.fs.file.service.FileRecycleService;
 import com.xddcodec.fs.file.service.FileUserFavoritesService;
 import com.xddcodec.fs.framework.common.constant.CommonConstant;
@@ -18,8 +19,6 @@ import com.xddcodec.fs.framework.common.context.WorkspaceContext;
 import com.xddcodec.fs.framework.common.domain.PageResult;
 import com.xddcodec.fs.framework.common.exception.BusinessException;
 import com.xddcodec.fs.framework.common.utils.I18nUtils;
-import com.xddcodec.fs.storage.facade.StorageServiceFacade;
-import com.xddcodec.fs.storage.plugin.core.IStorageOperationService;
 import com.xddcodec.fs.storage.plugin.core.context.StoragePlatformContextHolder;
 import io.github.linpeilie.Converter;
 import lombok.RequiredArgsConstructor;
@@ -53,7 +52,7 @@ public class FileRecycleServiceImpl implements FileRecycleService {
 
     private final FileUserFavoritesService fileUserFavoritesService;
 
-    private final StorageServiceFacade storageServiceFacade;
+    private final FileObjectReferenceService objectReferenceService;
 
     @Override
     public PageResult<FileRecycleVO> getRecyclePages(FileRecycleQry qry) {
@@ -182,18 +181,15 @@ public class FileRecycleServiceImpl implements FileRecycleService {
             throw new BusinessException(I18nUtils.getMessage("recycle.file.not.found.delete"));
         }
         List<FileInfo> allFiles = fileInfoService.listByIds(allFileIds);
-        List<FileInfo> physicalFilesToDelete = new ArrayList<>();
-        for (FileInfo file : allFiles) {
-            if (StrUtil.isBlank(file.getObjectKey())) {
-                continue;
-            }
-            long count = fileInfoService.count(new QueryWrapper()
-                    .where(FILE_INFO.OBJECT_KEY.eq(file.getObjectKey())
-                            .and(FILE_INFO.ID.notIn(allFileIds))));
-            if (count == 0) {
-                physicalFilesToDelete.add(file);
-            }
-        }
+        List<FileInfo> physicalObjects = allFiles.stream()
+                .filter(file -> StrUtil.isNotBlank(file.getObjectKey()))
+                .collect(Collectors.toMap(
+                        file -> String.valueOf(file.getStoragePlatformSettingId()) + "|" + file.getObjectKey(),
+                        file -> file,
+                        (left, right) -> left,
+                        LinkedHashMap::new
+                ))
+                .values().stream().toList();
 
         fileInfoService.removeByIds(allFileIds);
 
@@ -208,26 +204,16 @@ public class FileRecycleServiceImpl implements FileRecycleService {
                 new TransactionSynchronization() {
                     @Override
                     public void afterCommit() {
-                        for (FileInfo file : physicalFilesToDelete) {
+                        for (FileInfo file : physicalObjects) {
                             try {
-                                deletePhysicalFile(file);
+                                objectReferenceService.deletePhysicalFileIfUnreferencedWithLock(file);
                             } catch (Exception e) {
-                                log.error("删除物理文件失败: {}", file.getObjectKey(), e);
+                                log.error("删除无引用物理文件失败: {}", file.getObjectKey(), e);
                             }
                         }
                     }
                 }
         );
-    }
-
-    /**
-     * 删除物理文件
-     *
-     * @param file 文件信息
-     */
-    private void deletePhysicalFile(FileInfo file) {
-        IStorageOperationService storageService = storageServiceFacade.getStorageService(file.getStoragePlatformSettingId());
-        storageService.deleteFile(file.getObjectKey());
     }
 
     @Transactional(rollbackFor = Exception.class)

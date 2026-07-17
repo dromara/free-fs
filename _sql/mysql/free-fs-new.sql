@@ -33,7 +33,7 @@ CREATE TABLE `file_info`  (
   `parent_id` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL DEFAULT NULL COMMENT '父节点ID',
   `workspace_id` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT '所属工作空间ID',
   `user_id` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT '用户id',
-  `content_md5` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL COMMENT '用于秒传和文件校验',
+  `content_md5` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL DEFAULT NULL COMMENT '用于秒传和文件校验',
   `storage_platform_setting_id` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL DEFAULT NULL COMMENT '存储平台标识符',
   `upload_time` datetime NOT NULL COMMENT '上传时间',
   `update_time` datetime NULL DEFAULT NULL COMMENT '修改时间',
@@ -42,7 +42,9 @@ CREATE TABLE `file_info`  (
   `deleted_time` datetime NULL DEFAULT NULL COMMENT '删除时间',
   PRIMARY KEY (`id`) USING BTREE,
   INDEX `idx_workspace_query`(`workspace_id` ASC, `user_id` ASC, `is_deleted` ASC, `parent_id` ASC) USING BTREE,
-  INDEX `idx_workspace_id`(`workspace_id` ASC) USING BTREE
+  INDEX `idx_workspace_id`(`workspace_id` ASC) USING BTREE,
+  INDEX `idx_file_content_dedup`(`storage_platform_setting_id` ASC, `content_md5` ASC, `size` ASC, `is_dir` ASC) USING BTREE,
+  INDEX `idx_file_object_reference`(`storage_platform_setting_id` ASC, `object_key` ASC) USING BTREE
 ) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci COMMENT = '文件资源表' ROW_FORMAT = DYNAMIC;
 
 -- ----------------------------

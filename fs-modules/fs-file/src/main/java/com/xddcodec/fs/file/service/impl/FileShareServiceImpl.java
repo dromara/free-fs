@@ -42,8 +42,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.io.InputStream;
 import java.time.LocalDateTime;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
+import static com.xddcodec.fs.file.domain.table.FileInfoTableDef.FILE_INFO;
 import static com.xddcodec.fs.file.domain.table.FileShareTableDef.FILE_SHARE;
 
 /**
@@ -288,34 +291,50 @@ public class FileShareServiceImpl extends ServiceImpl<FileShareMapper, FileShare
         if (fileShare == null) {
             throw new BusinessException(I18nUtils.getMessage("share.not.exist.or.deleted"));
         }
-//        if (StringUtils.isNotEmpty(parentId)) {
-//            // 若有父文件ID参数, 则需要查询子数据集
-//            FileQry fileQry = new FileQry();
-//            fileQry.setParentId(parentId);
-//            return fileInfoService.getList(fileQry);
-//        }
-        // 获取分享明细
+        validateShareNotExpired(fileShare);
+
         List<String> shareFileIds = fileShareItemService.getShareFileIds(shareId);
+        List<FileInfo> fileInfos;
+
+        if (StringUtils.isNotEmpty(parentId)) {
+            FileInfo parent = getShareAccessibleFile(fileShare, shareFileIds, parentId);
+            if (!Boolean.TRUE.equals(parent.getIsDir())) {
+                throw new BusinessException(I18nUtils.getMessage("file.not.directory"));
+            }
+
+            fileInfos = fileInfoService.list(new QueryWrapper()
+                    .where(FILE_INFO.PARENT_ID.eq(parentId))
+                    .and(FILE_INFO.WORKSPACE_ID.eq(fileShare.getWorkspaceId()))
+                    .and(FILE_INFO.IS_DELETED.eq(false))
+                    .orderBy(FILE_INFO.IS_DIR.desc(), FILE_INFO.UPDATE_TIME.desc()));
+        } else {
+            if (CollUtil.isEmpty(shareFileIds)) {
+                fileInfos = List.of();
+            } else {
+                fileInfos = fileInfoService.list(new QueryWrapper()
+                        .where(FILE_INFO.ID.in(shareFileIds))
+                        .and(FILE_INFO.WORKSPACE_ID.eq(fileShare.getWorkspaceId()))
+                        .and(FILE_INFO.IS_DELETED.eq(false)));
+            }
+        }
 
         //记录访问日志
         recordShareAccessLog(shareId);
         //访问计数 + 1
 //        incrementViewCount(qry.getShareId());
 
-        return fileInfoService.getByFileIds(shareFileIds);
+        return converter.convert(fileInfos, FileVO.class);
     }
 
     @Override
     public FileDownloadVO downloadFiles(String shareId, String fileId) {
-        //判断是否分享内文件
-        if (!fileShareItemService.isFileInShare(shareId, fileId)) {
-            throw new BusinessException(I18nUtils.getMessage("share.file.not.in.share"));
+        FileShare fileShare = this.getById(shareId);
+        if (fileShare == null) {
+            throw new BusinessException(I18nUtils.getMessage("share.not.exist.or.deleted"));
         }
-        FileInfo fileInfo = fileInfoService.getById(fileId);
-        //判断是否文件夹
-        if (fileInfo == null) {
-            throw new BusinessException(I18nUtils.getMessage("file.download.failed.not.exist"));
-        }
+        validateShareNotExpired(fileShare);
+        List<String> shareFileIds = fileShareItemService.getShareFileIds(shareId);
+        FileInfo fileInfo = getShareAccessibleFile(fileShare, shareFileIds, fileId);
 
         IStorageOperationService storageService = storageServiceFacade.getStorageService(fileInfo.getStoragePlatformSettingId());
 
@@ -332,6 +351,36 @@ public class FileShareServiceImpl extends ServiceImpl<FileShareMapper, FileShare
         downloadVO.setFileSize(fileInfo.getSize());
         downloadVO.setResource(resource);
         return downloadVO;
+    }
+
+    private FileInfo getShareAccessibleFile(FileShare share, List<String> shareFileIds, String fileId) {
+        FileInfo target = fileInfoService.getOne(new QueryWrapper()
+                .where(FILE_INFO.ID.eq(fileId))
+                .and(FILE_INFO.WORKSPACE_ID.eq(share.getWorkspaceId()))
+                .and(FILE_INFO.IS_DELETED.eq(false)));
+        FileInfo current = target;
+        Set<String> visited = new HashSet<>();
+
+        while (current != null && visited.add(current.getId())) {
+            if (shareFileIds.contains(current.getId())) {
+                return target;
+            }
+            if (StringUtils.isEmpty(current.getParentId())) {
+                break;
+            }
+            current = fileInfoService.getOne(new QueryWrapper()
+                    .where(FILE_INFO.ID.eq(current.getParentId()))
+                    .and(FILE_INFO.WORKSPACE_ID.eq(share.getWorkspaceId()))
+                    .and(FILE_INFO.IS_DELETED.eq(false)));
+        }
+
+        throw new BusinessException(I18nUtils.getMessage("share.file.not.in.share"));
+    }
+
+    private void validateShareNotExpired(FileShare share) {
+        if (share.getExpireTime() != null && LocalDateTime.now().isAfter(share.getExpireTime())) {
+            throw new BusinessException(I18nUtils.getMessage("share.expired"));
+        }
     }
 
     /**

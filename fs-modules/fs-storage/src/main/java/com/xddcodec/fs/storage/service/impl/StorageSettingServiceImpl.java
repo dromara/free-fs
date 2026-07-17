@@ -24,6 +24,7 @@ import com.xddcodec.fs.storage.service.StorageSettingService;
 import com.mybatisflex.core.query.QueryWrapper;
 import com.mybatisflex.spring.service.impl.ServiceImpl;
 import io.github.linpeilie.Converter;
+import tools.jackson.core.type.TypeReference;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.CacheEvict;
@@ -34,6 +35,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Locale;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 import static com.xddcodec.fs.storage.domain.table.StorageSettingTableDef.STORAGE_SETTING;
@@ -48,6 +52,8 @@ import static com.xddcodec.fs.storage.domain.table.StorageSettingTableDef.STORAG
 @Service
 @RequiredArgsConstructor
 public class StorageSettingServiceImpl extends ServiceImpl<StorageSettingMapper, StorageSetting> implements StorageSettingService {
+
+    private static final String SECRET_MASK = "********";
 
     private final Converter converter;
 
@@ -71,6 +77,7 @@ public class StorageSettingServiceImpl extends ServiceImpl<StorageSettingMapper,
         }
         return storageSettings.stream().map(storageSetting -> {
             StorageSettingUserVO vo = converter.convert(storageSetting, StorageSettingUserVO.class);
+            vo.setConfigData(maskSensitiveConfig(storageSetting.getConfigData()));
             StoragePlatform storagePlatform = storagePlatformService.getStoragePlatformByIdentifier(storageSetting.getPlatformIdentifier());
             StoragePlatformVO storagePlatformVO = converter.convert(storagePlatform, StoragePlatformVO.class);
             vo.setStoragePlatform(storagePlatformVO);
@@ -227,16 +234,17 @@ public class StorageSettingServiceImpl extends ServiceImpl<StorageSettingMapper,
         if (!workspaceId.equals(storageSetting.getWorkspaceId())) {
             throw new BusinessException(I18nUtils.getMessage("storage.config.no.permission.modify"));
         }
+        String mergedConfigData = mergeSensitiveConfig(storageSetting.getConfigData(), cmd.getConfigData());
         boolean exists = this.checkDuplicateConfigForUpdate(
                 storageSetting.getPlatformIdentifier(),
                 workspaceId,
-                cmd.getConfigData(),
+                mergedConfigData,
                 cmd.getSettingId()
         );
         if (exists) {
             throw new BusinessException(I18nUtils.getMessage("storage.config.duplicate"));
         }
-        storageSetting.setConfigData(cmd.getConfigData());
+        storageSetting.setConfigData(mergedConfigData);
         storageSetting.setRemark(cmd.getRemark());
         this.updateById(storageSetting);
         // 刷新缓存
@@ -300,5 +308,42 @@ public class StorageSettingServiceImpl extends ServiceImpl<StorageSettingMapper,
                         .and(STORAGE_SETTING.WORKSPACE_ID.eq(workspaceId))
                         .and(STORAGE_SETTING.ENABLED.eq(CommonConstant.Y))
         );
+    }
+
+    private String maskSensitiveConfig(String configData) {
+        Map<String, Object> config = parseConfig(configData);
+        config.replaceAll((key, value) -> isSensitiveKey(key) && value != null ? SECRET_MASK : value);
+        return JsonUtils.toJsonString(config);
+    }
+
+    private String mergeSensitiveConfig(String existingConfigData, String incomingConfigData) {
+        Map<String, Object> existing = parseConfig(existingConfigData);
+        Map<String, Object> incoming = parseConfig(incomingConfigData);
+        existing.forEach((key, value) -> {
+            Object incomingValue = incoming.get(key);
+            if (isSensitiveKey(key)
+                    && (incomingValue == null
+                    || String.valueOf(incomingValue).isBlank()
+                    || SECRET_MASK.equals(String.valueOf(incomingValue)))) {
+                incoming.put(key, value);
+            }
+        });
+        return JsonUtils.toJsonString(incoming);
+    }
+
+    private Map<String, Object> parseConfig(String configData) {
+        Map<String, Object> config = JsonUtils.parseObject(
+                configData,
+                new TypeReference<LinkedHashMap<String, Object>>() { }
+        );
+        return config == null ? new LinkedHashMap<>() : config;
+    }
+
+    private boolean isSensitiveKey(String key) {
+        String normalized = key.toLowerCase(Locale.ROOT);
+        return normalized.contains("secret")
+                || normalized.contains("password")
+                || normalized.contains("token")
+                || (normalized.contains("access") && normalized.contains("key"));
     }
 }

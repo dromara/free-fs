@@ -42,6 +42,10 @@
             <groupId>com.xddcodec.fs</groupId>
             <artifactId>fs-storage</artifactId>
         </dependency>
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-crypto</artifactId>
+        </dependency>
     </dependencies>
 
 </project>

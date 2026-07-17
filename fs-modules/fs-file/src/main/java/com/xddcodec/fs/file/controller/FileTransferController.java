@@ -1,5 +1,6 @@
 package com.xddcodec.fs.file.controller;
 
+import cn.dev33.satoken.stp.StpUtil;
 import com.xddcodec.fs.file.domain.dto.CheckUploadCmd;
 import com.xddcodec.fs.file.domain.dto.InitDownloadCmd;
 import com.xddcodec.fs.file.domain.dto.InitUploadCmd;
@@ -64,9 +65,17 @@ public class FileTransferController {
 
     @GetMapping("/sse")
     @Operation(summary = "建立SSE连接", description = "建立SSE连接以接收实时传输事件")
-    public SseEmitter subscribe(@RequestParam String userId) {
+    public ResponseEntity<?> subscribe() {
+        if (!StpUtil.isLogin()) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Result.error(HttpStatus.UNAUTHORIZED.value(), "未登录", null));
+        }
+        String userId = StpUtil.getLoginIdAsString();
         log.info("User {} requesting SSE connection", userId);
-        return sseConnectionManager.createConnection(userId);
+        return ResponseEntity.ok()
+                .contentType(MediaType.TEXT_EVENT_STREAM)
+                .body(sseConnectionManager.createConnection(userId));
     }
 
     @PostMapping("/init")

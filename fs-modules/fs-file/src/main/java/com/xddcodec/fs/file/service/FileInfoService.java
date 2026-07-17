@@ -22,6 +22,11 @@ import java.util.List;
 public interface FileInfoService extends IService<FileInfo> {
 
     /**
+     * 获取当前工作空间内可访问的文件。
+     */
+    FileInfo getAuthorizedFile(String fileId);
+
+    /**
      * 下载文件
      *
      * @param fileId 文件ID

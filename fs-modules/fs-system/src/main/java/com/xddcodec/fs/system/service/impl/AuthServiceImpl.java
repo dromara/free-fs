@@ -6,7 +6,6 @@ import cn.hutool.core.util.RandomUtil;
 import com.mybatisflex.core.query.QueryWrapper;
 import com.xddcodec.fs.framework.common.constant.CommonConstant;
 import com.xddcodec.fs.framework.common.constant.RedisKey;
-import com.xddcodec.fs.framework.common.exception.BusinessException;
 import com.xddcodec.fs.framework.common.utils.I18nUtils;
 import com.xddcodec.fs.framework.notify.mail.domain.Mail;
 import com.xddcodec.fs.framework.notify.mail.event.MailEvent;
@@ -24,6 +23,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.Locale;
 
 import static com.xddcodec.fs.system.domain.table.SysUserTableDef.SYS_USER;
 
@@ -66,18 +66,36 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     public void sendLoginEmailCode(String account) {
-        SysUser user = sysUserService.getByMail(account);
+        String normalizedAccount = account.trim().toLowerCase(Locale.ROOT);
+        enforceVerificationCodeRateLimit("login", normalizedAccount);
+
+        SysUser user = sysUserService.getByMail(normalizedAccount);
         if (user == null) {
-            throw new BusinessException(I18nUtils.getMessage("user.not.exist"));
+            // 对不存在的账号同样返回成功，避免泄露账号是否已注册。
+            return;
         }
 
         // 生成验证码
         String code = RandomUtil.randomNumbers(CommonConstant.VERIFY_CODE_LENGTH);
-        String redisKey = RedisKey.getLoginKey(account);
+        String redisKey = RedisKey.getLoginKey(normalizedAccount);
         redisRepository.setExpire(redisKey, code, RedisKey.VERIFY_CODE_EXPIRE_SECONDS);
 
         // 发送邮件
         Mail mail = Mail.buildVerifyCodeMail(user.getEmail(), user.getNickname(), code);
         eventPublisher.publishEvent(new MailEvent(this, mail));
+    }
+
+    private void enforceVerificationCodeRateLimit(String scene, String email) {
+        String rateLimitKey = RedisKey.getVerifyCodeRateLimitKey(scene, email);
+        Boolean acquired = redisRepository.setIfAbsent(
+                rateLimitKey,
+                "1",
+                RedisKey.VERIFY_CODE_SEND_INTERVAL_SECONDS
+        );
+        if (!Boolean.TRUE.equals(acquired)) {
+            throw new com.xddcodec.fs.framework.common.exception.BusinessException(
+                    I18nUtils.getMessage("user.verification.code.too.frequent")
+            );
+        }
     }
 }

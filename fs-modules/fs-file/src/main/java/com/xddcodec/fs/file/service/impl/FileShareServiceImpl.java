@@ -101,7 +101,10 @@ public class FileShareServiceImpl extends ServiceImpl<FileShareMapper, FileShare
     @Override
 //    @Cacheable(value = CACHE_NAME, key = "#shareId", unless = "#result == null", sync = true)
     public FileShareVO getDetail(String shareId) {
-        FileShare share = this.getById(shareId);
+        String workspaceId = WorkspaceContext.getWorkspaceId();
+        FileShare share = this.getOne(new QueryWrapper()
+                .where(FILE_SHARE.ID.eq(shareId))
+                .and(FILE_SHARE.WORKSPACE_ID.eq(workspaceId)));
         if (share == null) {
             throw new BusinessException(I18nUtils.getMessage("share.not.exist"));
         }
@@ -132,10 +135,15 @@ public class FileShareServiceImpl extends ServiceImpl<FileShareMapper, FileShare
         share.setViewCount(0);
         share.setDownloadCount(0);
 
+        List<FileInfo> authorizedFiles = cmd.getFileIds().stream()
+                .distinct()
+                .map(fileInfoService::getAuthorizedFile)
+                .toList();
+
         if (StrUtil.isNotBlank(cmd.getShareName())) {
             share.setShareName(cmd.getShareName());
         } else {
-            FileInfo fileInfo = fileInfoService.getById(cmd.getFileIds().getFirst());
+            FileInfo fileInfo = authorizedFiles.getFirst();
             // 默认取第一个文件名，如果是多个文件则显示第一个文件名+"等{数量}"文件
             if (cmd.getFileIds().size() > 1) {
                 if (fileInfo != null) {
@@ -210,8 +218,18 @@ public class FileShareServiceImpl extends ServiceImpl<FileShareMapper, FileShare
         if (CollUtil.isEmpty(ids)) {
             return;
         }
-        this.removeByIds(ids);
-        fileShareItemService.remove(new QueryWrapper().in(FileShareItem::getShareId, ids));
+        String workspaceId = WorkspaceContext.getWorkspaceId();
+        List<String> authorizedIds = this.list(new QueryWrapper()
+                        .where(FILE_SHARE.ID.in(ids))
+                        .and(FILE_SHARE.WORKSPACE_ID.eq(workspaceId)))
+                .stream()
+                .map(FileShare::getId)
+                .toList();
+        if (authorizedIds.isEmpty()) {
+            return;
+        }
+        this.removeByIds(authorizedIds);
+        fileShareItemService.remove(new QueryWrapper().in(FileShareItem::getShareId, authorizedIds));
     }
 
     @Override

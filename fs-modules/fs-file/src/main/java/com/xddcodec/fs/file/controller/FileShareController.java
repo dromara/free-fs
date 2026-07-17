@@ -53,6 +53,7 @@ public class FileShareController {
     @GetMapping("/{shareId}/access/records")
     @Operation(summary = "获取分享访问记录列表", description = "获取分享访问记录列表")
     public Result<List<FileShareAccessRecordVO>> getListByShareId(@PathVariable String shareId) {
+        fileShareService.getDetail(shareId);
         List<FileShareAccessRecordVO> result = fileShareAccessRecordService.getListByShareId(shareId);
         return Result.ok(result);
     }

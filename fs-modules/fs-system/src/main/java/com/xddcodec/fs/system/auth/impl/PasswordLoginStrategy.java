@@ -1,11 +1,11 @@
 package com.xddcodec.fs.system.auth.impl;
 
-import cn.dev33.satoken.secure.SaSecureUtil;
 import com.mybatisflex.core.query.QueryWrapper;
 import com.xddcodec.fs.framework.common.enums.LoginType;
 import com.xddcodec.fs.framework.common.exception.BusinessException;
 import com.xddcodec.fs.framework.common.utils.I18nUtils;
 import com.xddcodec.fs.system.auth.LoginStrategy;
+import com.xddcodec.fs.system.auth.PasswordHashService;
 import com.xddcodec.fs.system.domain.SysUser;
 import com.xddcodec.fs.system.domain.dto.LoginCmd;
 import com.xddcodec.fs.system.domain.vo.LoginResult;
@@ -28,6 +28,8 @@ import static com.xddcodec.fs.system.domain.table.SysUserTableDef.SYS_USER;
 public class PasswordLoginStrategy implements LoginStrategy {
 
     private final SysUserMapper userMapper;
+
+    private final PasswordHashService passwordHashService;
 
     private final static String emailRegex = "^[A-Za-z0-9+_.-]+@(.+)$";
 
@@ -53,8 +55,12 @@ public class PasswordLoginStrategy implements LoginStrategy {
         if (user.getStatus() == 1) {
             throw new BusinessException(I18nUtils.getMessage("user.disabled"));
         }
-        if (!SaSecureUtil.sha256(password).equals(user.getPassword())) {
+        if (!passwordHashService.matches(password, user.getPassword())) {
             throw new BusinessException(I18nUtils.getMessage("user.account.or.password.incorrect"));
+        }
+
+        if (passwordHashService.isLegacyHash(user.getPassword())) {
+            user.setPassword(passwordHashService.encode(password));
         }
 
         LoginResult loginResult = new LoginResult();

@@ -248,7 +248,7 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
         // 获取任务
         FileTransferTask task = null;
         try {
-            task = getTaskFromCacheOrDB(taskId);
+            task = getAuthorizedTask(taskId);
             if (!TransferTaskStatus.initialized.equals(task.getStatus())) {
                 throw new BusinessException(I18nUtils.getMessage("task.status.incorrect", new Object[]{task.getStatus()}));
             }
@@ -414,6 +414,7 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
     public void uploadChunk(byte[] fileBytes, UploadChunkCmd cmd) {
         String taskId = cmd.getTaskId();
         Integer chunkIndex = cmd.getChunkIndex();
+        getAuthorizedTask(taskId);
         // 异步上传分片
         CompletableFuture.runAsync(() -> {
             try {
@@ -541,7 +542,7 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
     public void pauseTransfer(String taskId) {
         FileTransferTask task = null;
         try {
-            task = getTaskFromCacheOrDB(taskId);
+            task = getAuthorizedTask(taskId);
             TransferTaskStatus currentStatus = task.getStatus();
 
             // 验证当前状态是否支持暂停（上传或下载中）
@@ -577,7 +578,7 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
     public void resumeTransfer(String taskId) {
         FileTransferTask task = null;
         try {
-            task = getTaskFromCacheOrDB(taskId);
+            task = getAuthorizedTask(taskId);
             TransferTaskStatus currentStatus = task.getStatus();
 
             // 验证当前状态是否支持恢复
@@ -626,6 +627,7 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
 
     @Override
     public Set<Integer> getUploadedChunks(String taskId) {
+        getAuthorizedTask(taskId);
         Map<Integer, String> chunks = cacheManager.getTransferredChunkList(taskId);
         return chunks.keySet();
     }
@@ -635,7 +637,7 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
     public void cancelTransfer(String taskId) {
         FileTransferTask task = null;
         try {
-            task = getTaskFromCacheOrDB(taskId);
+            task = getAuthorizedTask(taskId);
             TransferTaskStatus currentStatus = task.getStatus();
 
             // 检查任务状态是否可以取消
@@ -702,6 +704,7 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
     @Override
     @Transactional
     public FileInfo mergeChunks(String taskId) {
+        getAuthorizedTask(taskId);
         return doMergeChunks(taskId);
     }
 
@@ -853,6 +856,19 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
             }
             // 缓存到 Redis
             cacheManager.cacheTask(task);
+        }
+        return task;
+    }
+
+    private FileTransferTask getAuthorizedTask(String taskId) {
+        if (StringUtils.isBlank(taskId)) {
+            throw new BusinessException(I18nUtils.getMessage("task.id.empty"));
+        }
+        FileTransferTask task = getTaskFromCacheOrDB(taskId);
+        String userId = StpUtil.getLoginIdAsString();
+        String workspaceId = WorkspaceContext.getWorkspaceId();
+        if (!Objects.equals(userId, task.getUserId()) || !Objects.equals(workspaceId, task.getWorkspaceId())) {
+            throw new BusinessException(I18nUtils.getMessage("file.no.permission.download"));
         }
         return task;
     }
@@ -1485,14 +1501,7 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
                 );
             }
 
-            FileInfo fileInfo = fileInfoService.getById(cmd.getFileId());
-            if (fileInfo == null) {
-                throw new BusinessException(I18nUtils.getMessage("file.not.found"));
-            }
-
-            if (!workspaceId.equals(fileInfo.getWorkspaceId())) {
-                throw new BusinessException(I18nUtils.getMessage("file.no.permission.download.file"));
-            }
+            FileInfo fileInfo = fileInfoService.getAuthorizedFile(cmd.getFileId());
 
             IStorageOperationService storageService =
                     storageServiceFacade.getStorageService(fileInfo.getStoragePlatformSettingId());
@@ -1722,6 +1731,7 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
     @Override
     public Set<Integer> getDownloadedChunks(String taskId) {
         try {
+            getAuthorizedTask(taskId);
             String chunksKey = "download:chunks:" + taskId;
             Set<Object> chunks = cacheManager.sGet(chunksKey);
 
@@ -1754,19 +1764,7 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
 
     @Override
     public FileTransferTask getTask(String taskId) {
-        if (StringUtils.isBlank(taskId)) {
-            throw new BusinessException(I18nUtils.getMessage("task.id.empty"));
-        }
-
-        QueryWrapper queryWrapper = QueryWrapper.create()
-                .where(FILE_TRANSFER_TASK.TASK_ID.eq(taskId));
-
-        FileTransferTask task = this.getOne(queryWrapper);
-        if (task == null) {
-            throw new BusinessException(I18nUtils.getMessage("task.not.exist", new Object[]{taskId}));
-        }
-
-        return task;
+        return getAuthorizedTask(taskId);
     }
 
 }

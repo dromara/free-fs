@@ -1,7 +1,9 @@
 package com.xddcodec.fs.file.controller;
 
 import com.xddcodec.fs.file.preview.PreviewService;
+import com.xddcodec.fs.file.service.FileInfoService;
 import com.xddcodec.fs.framework.common.constant.RedisKey;
+import com.xddcodec.fs.framework.common.context.WorkspaceContext;
 import com.xddcodec.fs.framework.common.domain.Result;
 import com.xddcodec.fs.framework.common.utils.I18nUtils;
 import com.xddcodec.fs.framework.redis.repository.RedisRepository;
@@ -24,6 +26,8 @@ public class FilePreviewController {
 
     private final PreviewService previewService;
 
+    private final FileInfoService fileInfoService;
+
     private final RedisRepository redisRepository;
 
     /**
@@ -32,10 +36,16 @@ public class FilePreviewController {
     @ResponseBody
     @PostMapping("/preview/token/{fileId}")
     public Result<String> previewToken(@PathVariable String fileId) {
+        fileInfoService.getAuthorizedFile(fileId);
         String token = UUID.randomUUID().toString().replace("-", "");
         redisRepository.setExpire(
                 RedisKey.getPreviewTokenKey(token),
                 fileId,
+                RedisKey.PREVIEW_TOKEN_EXPIRE
+        );
+        redisRepository.setExpire(
+                RedisKey.getPreviewWorkspaceKey(token),
+                WorkspaceContext.getWorkspaceId(),
                 RedisKey.PREVIEW_TOKEN_EXPIRE
         );
         return Result.ok(token);

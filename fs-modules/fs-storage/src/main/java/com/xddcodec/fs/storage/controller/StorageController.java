@@ -39,6 +39,7 @@ public class StorageController {
 
     @Operation(summary = "获取用户存储平台配置列表")
     @GetMapping("/platform/settings")
+    @SaCheckPermission("storage:manage")
     public Result<List<StorageSettingUserVO>> getStorageSettingsByUser() {
         List<StorageSettingUserVO> result = storageSettingService.getStorageSettingsByUser();
         return Result.ok(result);

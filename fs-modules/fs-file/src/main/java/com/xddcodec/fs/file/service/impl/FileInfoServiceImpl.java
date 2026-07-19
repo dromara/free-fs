@@ -572,8 +572,20 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
             };
             boolean isAsc = "ASC".equalsIgnoreCase(qry.getOrderDirection());
 
-            wrapper.orderBy(FILE_INFO.IS_DIR.desc())
-                    .orderBy(orderByField, isAsc);
+            wrapper.orderBy(FILE_INFO.IS_DIR.desc());
+            if ("display_name".equals(orderByField)) {
+                // 逐段按数值比较名称中的数字，避免 1、10、2，以及 2 (1)、2 (10)、2 (2)。
+                wrapper.orderBy("CASE WHEN display_name REGEXP '[0-9]' THEN 0 ELSE 1 END", isAsc)
+                        .orderBy("LOWER(REGEXP_SUBSTR(display_name, '^[^0-9]*'))", isAsc)
+                        .orderBy("CAST(REGEXP_SUBSTR(display_name, '[0-9]+', 1, 1) AS UNSIGNED)", isAsc)
+                        .orderBy("CAST(REGEXP_SUBSTR(display_name, '[0-9]+', 1, 2) AS UNSIGNED)", isAsc)
+                        .orderBy("CAST(REGEXP_SUBSTR(display_name, '[0-9]+', 1, 3) AS UNSIGNED)", isAsc)
+                        .orderBy("LOWER(display_name)", isAsc);
+            } else {
+                wrapper.orderBy(orderByField, isAsc);
+            }
+            // 保证分页排序稳定，避免排序字段相同时跨页重复或遗漏。
+            wrapper.orderBy(FILE_INFO.ID.asc());
         }
 
         // 执行分页查询 (使用 listAs 直接映射到 VO)
@@ -582,7 +594,7 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
         // 异步补充缩略图 (这里用 parallelStream 没问题，或者在转换后处理)
         if (CollUtil.isNotEmpty(resultPage.getRecords())) {
             resultPage.getRecords().parallelStream().forEach(vo ->
-                    vo.setThumbnailUrl(fillThumbnailUrl(vo.getSuffix(), vo.getObjectKey()))
+                    vo.setThumbnailUrl(fillThumbnailUrl(vo.getId(), vo.getSuffix()))
             );
         }
 
@@ -592,15 +604,13 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
     /**
      * 填充图片封面链接
      */
-    private String fillThumbnailUrl(String suffix, String objectKey) {
+    private String fillThumbnailUrl(String fileId, String suffix) {
         // 如果非图片文件跳过
         if (!FileTypeEnum.isImageFile(suffix)) {
             return null;
         }
-        String storagePlatformSettingId = StoragePlatformContextHolder.getConfigId();
-        IStorageOperationService storageService = storageServiceFacade.getStorageService(storagePlatformSettingId);
-
-        return storageService.getFileUrl(objectKey, 3600);
+        // 统一走同源文件流，避免把 minio/rustfs 等 Docker 内部地址返回给浏览器。
+        return "/api/file/stream/preview/" + fileId;
     }
 
     @Override
@@ -642,7 +652,7 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
         } else {
             vo.setIncludeFiles(0);
             vo.setIncludeFolders(0);
-            vo.setThumbnailUrl(fillThumbnailUrl(vo.getSuffix(), fileInfo.getObjectKey()));
+            vo.setThumbnailUrl(fillThumbnailUrl(fileInfo.getId(), vo.getSuffix()));
         }
         return vo;
     }

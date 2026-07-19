@@ -20,6 +20,7 @@ public abstract class AbstractPreviewStrategy implements PreviewStrategy {
     public void fillModel(PreviewContext context, Model model) {
         // 填充基础数据
         model.addAttribute("fileName", context.getFileName());
+        model.addAttribute("fileId", context.getFileId());
         model.addAttribute("fileSize", context.getFileSize());
         model.addAttribute("fileType", context.getFileType().getName());
         model.addAttribute("extension", context.getExtension());
@@ -62,4 +63,3 @@ public abstract class AbstractPreviewStrategy implements PreviewStrategy {
      */
     protected abstract void fillSpecificModel(PreviewContext context, Model model);
 }
-

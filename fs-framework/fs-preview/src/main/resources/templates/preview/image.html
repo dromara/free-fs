@@ -64,6 +64,28 @@
             background: rgba(255,255,255,0.1);
         }
 
+        .nav-btn {
+            position: fixed;
+            top: 50%;
+            transform: translateY(-50%);
+            z-index: 120;
+            width: 52px;
+            height: 72px;
+            border: 0;
+            border-radius: 10px;
+            background: rgba(255,255,255,0.1);
+            color: #fff;
+            font-size: 42px;
+            line-height: 1;
+            cursor: pointer;
+            backdrop-filter: blur(8px);
+            transition: background 0.2s, opacity 0.2s;
+        }
+        .nav-btn:hover { background: rgba(255,255,255,0.22); }
+        .nav-btn.prev { left: 24px; }
+        .nav-btn.next { right: 24px; }
+        .nav-btn:disabled { opacity: 0; pointer-events: none; }
+
         /* Main Image Container */
         #image-container {
             width: 100%;
@@ -202,7 +224,7 @@
         .zoom-info.show { opacity: 1; }
     </style>
 </head>
-<body>
+<body th:attr="data-file-id=${fileId}">
 
 <div class="header">
     <div class="file-name" th:text="${fileName}">filename.jpg</div>
@@ -213,6 +235,9 @@
         </svg>
     </div>
 </div>
+
+<button id="preview-prev" class="nav-btn prev" type="button" title="上一个（←）" onclick="navigatePreview(-1)">‹</button>
+<button id="preview-next" class="nav-btn next" type="button" title="下一个（→）" onclick="navigatePreview(1)">›</button>
 
 <div id="image-container">
     <div class="loading-container" id="loading">
@@ -396,8 +421,8 @@
             case '+': case '=': zoomIn(); break;
             case '-': zoomOut(); break;
             case '0': resetZoom(); break;
-            case 'ArrowLeft': rotateLeft(); break;
-            case 'ArrowRight': rotateRight(); break;
+            case 'ArrowLeft': if (e.shiftKey) rotateLeft(); break;
+            case 'ArrowRight': if (e.shiftKey) rotateRight(); break;
             case 'Escape': window.close(); break;
         }
     });
@@ -407,5 +432,6 @@
         e.preventDefault();
     });
 </script>
+<script src="/lib/preview-navigation.js"></script>
 </body>
 </html>

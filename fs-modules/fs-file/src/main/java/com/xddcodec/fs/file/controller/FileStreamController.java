@@ -15,6 +15,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.http.MediaTypeFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
@@ -181,11 +182,8 @@ public class FileStreamController {
         String responseExtension = strategy.getResponseExtension(originalSuffix);
         String fileName = changeExtension(displayName, responseExtension);
 
-        if ("pdf".equalsIgnoreCase(responseExtension)) {
-            headers.setContentType(MediaType.APPLICATION_PDF);
-        } else {
-            headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
-        }
+        headers.setContentType(MediaTypeFactory.getMediaType(fileName)
+                .orElse(MediaType.APPLICATION_OCTET_STREAM));
 
         if (isRange || !strategy.needConvert()) {
             headers.setContentLength(sourceByteLength);
@@ -216,11 +214,8 @@ public class FileStreamController {
         String fileName = changeExtension(file.getDisplayName(), responseExtension);
 
         // 设置 Content-Type
-        if ("pdf".equalsIgnoreCase(responseExtension)) {
-            headers.setContentType(MediaType.APPLICATION_PDF);
-        } else {
-            headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
-        }
+        headers.setContentType(MediaTypeFactory.getMediaType(fileName)
+                .orElse(MediaType.APPLICATION_OCTET_STREAM));
 
         // 智能设置 Content-Length：转换流不设置长度，Range请求必须设置
         if (isRange || !strategy.needConvert()) {

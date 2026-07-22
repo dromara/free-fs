@@ -16,6 +16,8 @@ import com.xddcodec.fs.file.domain.vo.InitDownloadResultVO;
 import com.xddcodec.fs.file.service.FileTransferTaskService;
 import com.xddcodec.fs.framework.common.domain.Result;
 import com.xddcodec.fs.framework.sse.SseConnectionManager;
+import com.xddcodec.fs.log.constant.OperationType;
+import com.xddcodec.fs.log.service.SysOperationLogService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.enums.ParameterIn;
@@ -55,6 +57,7 @@ public class FileTransferController {
 
     private final FileTransferTaskService fileTransferTaskService;
     private final SseConnectionManager sseConnectionManager;
+    private final SysOperationLogService operationLogService;
 
     @GetMapping("/files")
     @Operation(summary = "获取传输列表", description = "获取传输列表")
@@ -212,6 +215,15 @@ public class FileTransferController {
         try {
             // 获取文件信息和文件流
             FileDownloadVO fileDownload = fileTransferTaskService.downloadFile(fileId);
+
+            operationLogService.recordSuccess(
+                    OperationType.DOWNLOAD,
+                    "下载文件",
+                    "FILE",
+                    fileId,
+                    fileDownload.getFileName(),
+                    "文件大小: " + fileDownload.getFileSize()
+            );
 
             // 设置响应头
             HttpHeaders headers = new HttpHeaders();

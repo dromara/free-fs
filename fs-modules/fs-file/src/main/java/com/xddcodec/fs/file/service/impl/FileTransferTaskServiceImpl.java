@@ -35,6 +35,8 @@ import com.xddcodec.fs.framework.common.utils.FileUtils;
 import com.xddcodec.fs.framework.common.utils.I18nUtils;
 import com.xddcodec.fs.framework.common.utils.StringUtils;
 import com.xddcodec.fs.file.service.TransferSseService;
+import com.xddcodec.fs.log.constant.OperationType;
+import com.xddcodec.fs.log.service.SysOperationLogService;
 import com.xddcodec.fs.storage.facade.StorageServiceFacade;
 import com.xddcodec.fs.storage.plugin.core.IStorageOperationService;
 import com.xddcodec.fs.storage.plugin.core.context.StoragePlatformContextHolder;
@@ -90,6 +92,7 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
     private final TaskExecutor fileMergeExecutor;
     private final StorageServiceFacade storageServiceFacade;
     private final SysUserTransferSettingService userTransferSettingService;
+    private final SysOperationLogService operationLogService;
     @Value("${spring.application.name:free-fs}")
     private String applicationName;
     private static final long FOLDER_DOWNLOAD_TASK_TTL_MS = 2 * 60 * 60 * 1000L;
@@ -368,6 +371,18 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
             newFileInfo.setIsDeleted(CommonConstant.N);
 
             fileInfoService.save(newFileInfo);
+
+            operationLogService.recordSuccessAs(
+                    task.getWorkspaceId(),
+                    task.getUserId(),
+                    task.getUserId(),
+                    OperationType.UPLOAD,
+                    "上传文件（秒传）",
+                    "FILE",
+                    newFileInfo.getId(),
+                    newFileInfo.getDisplayName(),
+                    "文件大小: " + newFileInfo.getSize()
+            );
 
             // 更新任务状态为已完成
             task.setFileMd5(fileMd5);
@@ -815,6 +830,18 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
             task.setUploadedChunks(uploadedCount);
             task.setCompleteTime(completeTime);
             this.updateById(task);
+
+            operationLogService.recordSuccessAs(
+                    task.getWorkspaceId(),
+                    task.getUserId(),
+                    task.getUserId(),
+                    OperationType.UPLOAD,
+                    "上传文件",
+                    "FILE",
+                    fileInfo.getId(),
+                    fileInfo.getDisplayName(),
+                    "文件大小: " + fileInfo.getSize()
+            );
 
             cacheManager.cleanTask(taskId);
 

@@ -6,6 +6,8 @@ import cn.dev33.satoken.stp.StpUtil;
 import com.mybatisflex.core.paginate.Page;
 import com.xddcodec.fs.framework.common.context.WorkspaceContext;
 import com.xddcodec.fs.framework.common.domain.Result;
+import com.xddcodec.fs.log.constant.OperationType;
+import com.xddcodec.fs.log.service.SysOperationLogService;
 import com.xddcodec.fs.system.domain.dto.CreateInvitationCmd;
 import com.xddcodec.fs.system.domain.dto.CreateWorkspaceCmd;
 import com.xddcodec.fs.system.domain.dto.UpdateMemberRoleCmd;
@@ -42,6 +44,7 @@ public class WorkspaceController {
     private final SysWorkspaceService workspaceService;
     private final SysWorkspaceMemberService memberService;
     private final SysWorkspaceInvitationService invitationService;
+    private final SysOperationLogService operationLogService;
 
     @Operation(summary = "获取当前用户工作空间列表")
     @GetMapping("/list")
@@ -55,6 +58,15 @@ public class WorkspaceController {
     @PostMapping
     public Result<WorkspaceVO> create(@Valid @RequestBody CreateWorkspaceCmd cmd) {
         WorkspaceVO result = workspaceService.createWorkspace(cmd);
+        operationLogService.recordSuccess(
+                result.getId(),
+                OperationType.CREATE_WORKSPACE,
+                "创建工作空间",
+                "WORKSPACE",
+                result.getId(),
+                result.getName(),
+                "Slug: " + result.getSlug()
+        );
         return Result.ok(result);
     }
 
@@ -73,6 +85,14 @@ public class WorkspaceController {
     public Result<WorkspaceVO> update(@Valid @RequestBody UpdateWorkspaceCmd cmd) {
         String wsId = WorkspaceContext.getWorkspaceId();
         WorkspaceVO result = workspaceService.updateWorkspace(wsId, cmd);
+        operationLogService.recordSuccess(
+                OperationType.UPDATE_WORKSPACE,
+                "更新工作空间",
+                "WORKSPACE",
+                wsId,
+                result.getName(),
+                null
+        );
         return Result.ok(result);
     }
 
@@ -81,7 +101,17 @@ public class WorkspaceController {
     public Result<Void> delete() {
         String wsId = WorkspaceContext.getWorkspaceId();
         String userId = StpUtil.getLoginIdAsString();
+        WorkspaceDetailVO workspace = workspaceService.getCurrentDetail(wsId, userId);
         workspaceService.deleteWorkspace(wsId, userId);
+        operationLogService.recordSuccess(
+                wsId,
+                OperationType.DELETE_WORKSPACE,
+                "删除工作空间",
+                "WORKSPACE",
+                wsId,
+                workspace.getName(),
+                null
+        );
         return Result.ok();
     }
 
@@ -113,6 +143,14 @@ public class WorkspaceController {
         String wsId = WorkspaceContext.getWorkspaceId();
         String currentUserId = StpUtil.getLoginIdAsString();
         memberService.updateMemberRole(wsId, userId, cmd.getRoleId(), currentUserId);
+        operationLogService.recordSuccess(
+                OperationType.UPDATE_MEMBER_ROLE,
+                "修改成员角色",
+                "MEMBER",
+                userId,
+                userId,
+                "角色 ID: " + cmd.getRoleId()
+        );
         return Result.ok();
     }
 
@@ -123,6 +161,14 @@ public class WorkspaceController {
         String wsId = WorkspaceContext.getWorkspaceId();
         String currentUserId = StpUtil.getLoginIdAsString();
         memberService.removeMember(wsId, userId, currentUserId);
+        operationLogService.recordSuccess(
+                OperationType.REMOVE_MEMBER,
+                "移除成员",
+                "MEMBER",
+                userId,
+                userId,
+                null
+        );
         return Result.ok();
     }
 
@@ -143,6 +189,14 @@ public class WorkspaceController {
         String wsId = WorkspaceContext.getWorkspaceId();
         String inviterId = StpUtil.getLoginIdAsString();
         WorkspaceInvitationVO result = invitationService.createInvitation(wsId, cmd, inviterId);
+        operationLogService.recordSuccess(
+                OperationType.CREATE_INVITATION,
+                "邀请成员",
+                "INVITATION",
+                result.getId(),
+                result.getEmail(),
+                "角色 ID: " + cmd.getRoleId()
+        );
         return Result.ok(result);
     }
 
@@ -152,6 +206,14 @@ public class WorkspaceController {
     public Result<Void> cancelInvitation(@PathVariable String id) {
         String wsId = WorkspaceContext.getWorkspaceId();
         invitationService.cancelInvitation(id, wsId);
+        operationLogService.recordSuccess(
+                OperationType.CANCEL_INVITATION,
+                "取消邀请",
+                "INVITATION",
+                id,
+                null,
+                null
+        );
         return Result.ok();
     }
 }

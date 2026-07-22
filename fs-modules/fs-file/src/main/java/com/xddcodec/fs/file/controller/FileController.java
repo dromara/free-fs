@@ -2,6 +2,7 @@ package com.xddcodec.fs.file.controller;
 
 import cn.dev33.satoken.annotation.SaCheckPermission;
 import com.xddcodec.fs.file.domain.FileInfo;
+import com.xddcodec.fs.file.domain.dto.CopyFileCmd;
 import com.xddcodec.fs.file.domain.dto.CreateDirectoryCmd;
 import com.xddcodec.fs.file.domain.dto.MoveFileCmd;
 import com.xddcodec.fs.file.domain.dto.RenameFileCmd;
@@ -14,6 +15,8 @@ import com.xddcodec.fs.file.service.FileRecycleService;
 import com.xddcodec.fs.file.service.FileUserFavoritesService;
 import com.xddcodec.fs.framework.common.domain.PageResult;
 import com.xddcodec.fs.framework.common.domain.Result;
+import com.xddcodec.fs.log.constant.OperationType;
+import com.xddcodec.fs.log.service.SysOperationLogService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.Parameters;
@@ -24,6 +27,7 @@ import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * 文件资源控制器
@@ -46,6 +50,9 @@ public class FileController {
 
     @Autowired
     private FileUserFavoritesService fileUserFavoritesService;
+
+    @Autowired
+    private SysOperationLogService operationLogService;
 
     @GetMapping("/list")
     @Operation(summary = "查询所有文件列表", description = "支持关键词搜索和文件类型筛选的列表查询")
@@ -80,7 +87,16 @@ public class FileController {
     @Operation(summary = "移到回收站", description = "将文件移动到回收站")
     @SaCheckPermission("file:write")
     public Result<?> deleteFiles(@RequestBody List<String> fileIds) {
+        List<FileInfo> targets = getAuthorizedFiles(fileIds);
         fileInfoService.moveFilesToRecycleBin(fileIds);
+        operationLogService.recordSuccess(
+                OperationType.DELETE,
+                "放入回收站",
+                targetType(targets),
+                String.join(",", fileIds),
+                summarizeNames(targets),
+                "共 " + targets.size() + " 项"
+        );
         return Result.ok();
     }
 
@@ -89,6 +105,14 @@ public class FileController {
     @SaCheckPermission("file:write")
     public Result<FileInfo> createDirectory(@RequestBody @Validated CreateDirectoryCmd cmd) {
         FileInfo fileInfo = fileInfoService.createDirectory(cmd);
+        operationLogService.recordSuccess(
+                OperationType.CREATE_FOLDER,
+                "新建文件夹",
+                "DIRECTORY",
+                fileInfo.getId(),
+                fileInfo.getDisplayName(),
+                "父目录: " + (fileInfo.getParentId() == null ? "根目录" : fileInfo.getParentId())
+        );
         return Result.ok(fileInfo);
     }
 
@@ -96,7 +120,18 @@ public class FileController {
     @Operation(summary = "文件重命名", description = "文件重命名")
     @SaCheckPermission("file:write")
     public Result<?> createDirectory(@PathVariable String fileId, @RequestBody @Validated RenameFileCmd cmd) {
+        FileInfo before = fileInfoService.getAuthorizedFile(fileId);
+        String oldName = before.getDisplayName();
         fileInfoService.renameFile(fileId, cmd);
+        FileInfo after = fileInfoService.getAuthorizedFile(fileId);
+        operationLogService.recordSuccess(
+                OperationType.RENAME,
+                "重命名",
+                Boolean.TRUE.equals(after.getIsDir()) ? "DIRECTORY" : "FILE",
+                fileId,
+                after.getDisplayName(),
+                oldName + " -> " + after.getDisplayName()
+        );
         return Result.ok();
     }
 
@@ -104,7 +139,42 @@ public class FileController {
     @Operation(summary = "文件移动", description = "文件移动")
     @SaCheckPermission("file:write")
     public Result<?> createDirectory(@RequestBody @Validated MoveFileCmd cmd) {
+        List<FileInfo> targets = getAuthorizedFiles(cmd.getFileIds());
+        String targetName = "根目录";
+        if (cmd.getDirId() != null && !cmd.getDirId().isBlank()) {
+            targetName = fileInfoService.getAuthorizedFile(cmd.getDirId()).getDisplayName();
+        }
         fileInfoService.moveFile(cmd);
+        operationLogService.recordSuccess(
+                OperationType.MOVE,
+                "移动文件",
+                targetType(targets),
+                String.join(",", cmd.getFileIds()),
+                summarizeNames(targets),
+                "移动到: " + targetName
+        );
+        return Result.ok();
+    }
+
+    @PostMapping("/copies")
+    @Operation(summary = "复制文件", description = "复制文件或文件夹到指定目录")
+    @SaCheckPermission("file:write")
+    public Result<?> copyFiles(@RequestBody @Validated CopyFileCmd cmd) {
+        List<FileInfo> sources = getAuthorizedFiles(cmd.getFileIds());
+        List<FileInfo> copies = fileInfoService.copyFiles(cmd);
+        String targetName = "根目录";
+        if (cmd.getDirId() != null && !cmd.getDirId().isBlank()) {
+            targetName = fileInfoService.getAuthorizedFile(cmd.getDirId()).getDisplayName();
+        }
+        operationLogService.recordSuccess(
+                OperationType.COPY,
+                "复制文件",
+                targetType(sources),
+                copies.stream().map(FileInfo::getId).collect(Collectors.joining(",")),
+                summarizeNames(copies),
+                "从 " + summarizeNames(sources) + " 复制到: " + targetName
+        );
+        // 不返回完整文件实体，避免把对象存储键等内部字段暴露给客户端。
         return Result.ok();
     }
 
@@ -126,6 +196,14 @@ public class FileController {
     @SaCheckPermission("file:write")
     public Result<?> restoreFile(@RequestBody List<String> fileIds) {
         fileRecycleService.restoreFiles(fileIds);
+        operationLogService.recordSuccess(
+                OperationType.RESTORE,
+                "还原文件",
+                fileIds.size() > 1 ? "MULTIPLE" : "FILE",
+                String.join(",", fileIds),
+                null,
+                "共还原 " + fileIds.size() + " 项"
+        );
         return Result.ok();
     }
 
@@ -134,6 +212,14 @@ public class FileController {
     @SaCheckPermission("file:write")
     public Result<?> permanentlyDeleteFiles(@RequestBody List<String> fileIds) {
         fileRecycleService.permanentlyDeleteFiles(fileIds);
+        operationLogService.recordSuccess(
+                OperationType.PERMANENT_DELETE,
+                "彻底删除",
+                fileIds.size() > 1 ? "MULTIPLE" : "FILE",
+                String.join(",", fileIds),
+                null,
+                "共彻底删除 " + fileIds.size() + " 项"
+        );
         return Result.ok();
     }
 
@@ -142,6 +228,14 @@ public class FileController {
     @SaCheckPermission("file:write")
     public Result<?> clearRecycles() {
         fileRecycleService.clearRecycles();
+        operationLogService.recordSuccess(
+                OperationType.CLEAR_RECYCLE,
+                "清空回收站",
+                "RECYCLE_BIN",
+                null,
+                "回收站",
+                null
+        );
         return Result.ok();
     }
 
@@ -159,5 +253,30 @@ public class FileController {
     public Result<?> unFavoritesFile(@RequestBody List<String> fileIds) {
         fileUserFavoritesService.unFavoritesFile(fileIds);
         return Result.ok();
+    }
+
+    private List<FileInfo> getAuthorizedFiles(List<String> fileIds) {
+        return fileIds.stream()
+                .distinct()
+                .map(fileInfoService::getAuthorizedFile)
+                .toList();
+    }
+
+    private String summarizeNames(List<FileInfo> files) {
+        if (files == null || files.isEmpty()) {
+            return null;
+        }
+        String names = files.stream()
+                .limit(5)
+                .map(FileInfo::getDisplayName)
+                .collect(Collectors.joining("、"));
+        return files.size() > 5 ? names + " 等 " + files.size() + " 项" : names;
+    }
+
+    private String targetType(List<FileInfo> files) {
+        if (files.size() != 1) {
+            return "MULTIPLE";
+        }
+        return Boolean.TRUE.equals(files.getFirst().getIsDir()) ? "DIRECTORY" : "FILE";
     }
 }

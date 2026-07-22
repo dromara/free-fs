@@ -7,6 +7,7 @@ import cn.hutool.core.util.StrUtil;
 import com.mybatisflex.core.paginate.Page;
 import com.mybatisflex.core.util.UpdateEntity;
 import com.xddcodec.fs.file.domain.FileInfo;
+import com.xddcodec.fs.file.domain.dto.CopyFileCmd;
 import com.xddcodec.fs.file.domain.dto.CreateDirectoryCmd;
 import com.xddcodec.fs.file.domain.dto.MoveFileCmd;
 import com.xddcodec.fs.file.domain.dto.RenameFileCmd;
@@ -311,6 +312,132 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
         if (!updateList.isEmpty()) {
             this.updateBatch(updateList);
         }
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public List<FileInfo> copyFiles(CopyFileCmd cmd) {
+        if (CollUtil.isEmpty(cmd.getFileIds())) {
+            throw new BusinessException(I18nUtils.getMessage("file.id.list.empty"));
+        }
+
+        String workspaceId = WorkspaceContext.getWorkspaceId();
+        String userId = StpUtil.getLoginIdAsString();
+        String targetDirId = StringUtils.isBlank(cmd.getDirId()) ? null : cmd.getDirId();
+        String targetStorageId = StoragePlatformContextHolder.getConfigId();
+
+        if (targetDirId != null) {
+            FileInfo targetDir = getAuthorizedFile(targetDirId);
+            if (!Boolean.TRUE.equals(targetDir.getIsDir())) {
+                throw new BusinessException(I18nUtils.getMessage("file.target.dir.invalid"));
+            }
+            targetStorageId = targetDir.getStoragePlatformSettingId();
+        }
+
+        List<String> requestedIds = cmd.getFileIds().stream().distinct().toList();
+        List<FileInfo> sourceFiles = list(new QueryWrapper()
+                .where(FILE_INFO.ID.in(requestedIds))
+                .and(FILE_INFO.WORKSPACE_ID.eq(workspaceId))
+                .and(FILE_INFO.IS_DELETED.eq(false)));
+        Map<String, FileInfo> sourceMap = sourceFiles.stream()
+                .collect(Collectors.toMap(FileInfo::getId, file -> file));
+
+        if (sourceMap.size() != requestedIds.size()) {
+            throw new BusinessException(I18nUtils.getMessage("file.not.found"));
+        }
+
+        List<FileInfo> copiedTopLevelFiles = new ArrayList<>();
+        for (String sourceId : requestedIds) {
+            FileInfo source = sourceMap.get(sourceId);
+            if (!sameStorage(source.getStoragePlatformSettingId(), targetStorageId)) {
+                throw new BusinessException(I18nUtils.getMessage("file.cannot.copy.across.storage"));
+            }
+            if (targetDirId != null && Boolean.TRUE.equals(source.getIsDir())
+                    && (source.getId().equals(targetDirId)
+                    || isSubDirectory(source.getId(), targetDirId, workspaceId))) {
+                throw new BusinessException(I18nUtils.getMessage(
+                        "file.cannot.copy.to.self", new Object[]{source.getDisplayName()}));
+            }
+
+            String topLevelName = generateUniqueName(
+                    workspaceId,
+                    targetDirId,
+                    source.getDisplayName(),
+                    source.getIsDir(),
+                    null,
+                    targetStorageId
+            );
+            LocalDateTime now = LocalDateTime.now();
+            List<FileInfo> copies = new ArrayList<>();
+            FileInfo topLevelCopy = cloneFileInfo(source, targetDirId, topLevelName, userId, now);
+            copies.add(topLevelCopy);
+            if (Boolean.TRUE.equals(source.getIsDir())) {
+                cloneDirectoryChildren(source.getId(), topLevelCopy.getId(), workspaceId, userId, now, copies);
+            }
+
+            // 每个顶层项目单独批量落库，让下一项的重名检测能够看到前一项。
+            this.saveBatch(copies);
+            copiedTopLevelFiles.add(topLevelCopy);
+        }
+        return copiedTopLevelFiles;
+    }
+
+    private void cloneDirectoryChildren(String sourceParentId,
+                                        String targetParentId,
+                                        String workspaceId,
+                                        String userId,
+                                        LocalDateTime now,
+                                        List<FileInfo> copies) {
+        List<FileInfo> children = list(new QueryWrapper()
+                .where(FILE_INFO.PARENT_ID.eq(sourceParentId))
+                .and(FILE_INFO.WORKSPACE_ID.eq(workspaceId))
+                .and(FILE_INFO.IS_DELETED.eq(false))
+                .orderBy(FILE_INFO.IS_DIR.desc(), FILE_INFO.UPLOAD_TIME.asc()));
+
+        for (FileInfo child : children) {
+            FileInfo childCopy = cloneFileInfo(
+                    child,
+                    targetParentId,
+                    child.getDisplayName(),
+                    userId,
+                    now
+            );
+            copies.add(childCopy);
+            if (Boolean.TRUE.equals(child.getIsDir())) {
+                cloneDirectoryChildren(child.getId(), childCopy.getId(), workspaceId, userId, now, copies);
+            }
+        }
+    }
+
+    private FileInfo cloneFileInfo(FileInfo source,
+                                   String parentId,
+                                   String displayName,
+                                   String userId,
+                                   LocalDateTime now) {
+        FileInfo copy = new FileInfo();
+        copy.setId(IdUtil.fastSimpleUUID());
+        copy.setObjectKey(source.getObjectKey());
+        copy.setOriginalName(source.getOriginalName());
+        copy.setDisplayName(displayName);
+        copy.setSuffix(source.getSuffix());
+        copy.setSize(source.getSize());
+        copy.setMimeType(source.getMimeType());
+        copy.setIsDir(source.getIsDir());
+        copy.setParentId(parentId);
+        copy.setWorkspaceId(source.getWorkspaceId());
+        copy.setUserId(userId);
+        copy.setContentMd5(source.getContentMd5());
+        copy.setStoragePlatformSettingId(source.getStoragePlatformSettingId());
+        copy.setUploadTime(now);
+        copy.setUpdateTime(now);
+        copy.setLastAccessTime(null);
+        copy.setIsDeleted(false);
+        copy.setDeletedTime(null);
+        return copy;
+    }
+
+    private boolean sameStorage(String left, String right) {
+        return Objects.equals(StrUtil.blankToDefault(left, ""), StrUtil.blankToDefault(right, ""));
     }
 
     // 检查target Id是否是source Id的子目录

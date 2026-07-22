@@ -423,4 +423,30 @@ CREATE TABLE `sys_workspace_member`  (
 -- ----------------------------
 INSERT INTO `sys_workspace_member` VALUES (8, '01kpq1bqzq1z99r0vd2xxqr3yk', '01jrvgs943q0f43h0aa5mjde0y', 100015, '2026-04-21 11:29:23', '2026-04-21 11:29:23');
 
+-- ----------------------------
+-- Table structure for sys_operation_log
+-- ----------------------------
+DROP TABLE IF EXISTS `sys_operation_log`;
+CREATE TABLE `sys_operation_log` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `operator_id` varchar(128) DEFAULT NULL COMMENT '操作人ID',
+  `operator_name` varchar(128) DEFAULT NULL COMMENT '操作人名称',
+  `workspace_id` varchar(128) DEFAULT NULL COMMENT '工作空间ID',
+  `operation_type` varchar(64) NOT NULL COMMENT '操作类型',
+  `operation_name` varchar(128) NOT NULL COMMENT '操作名称',
+  `target_type` varchar(32) DEFAULT NULL COMMENT '目标类型',
+  `target_id` varchar(128) DEFAULT NULL COMMENT '目标ID',
+  `target_name` varchar(255) DEFAULT NULL COMMENT '目标名称',
+  `detail` text COMMENT '操作详情',
+  `operation_ip` varchar(50) DEFAULT NULL COMMENT '客户端IP',
+  `user_agent` varchar(512) DEFAULT NULL COMMENT 'User-Agent',
+  `status` tinyint NOT NULL DEFAULT 0 COMMENT '0成功 1失败',
+  `error_message` varchar(512) DEFAULT NULL COMMENT '失败原因',
+  `operation_time` datetime NOT NULL COMMENT '操作时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_operation_workspace_time` (`workspace_id`, `operation_time`),
+  KEY `idx_operation_operator_time` (`operator_id`, `operation_time`),
+  KEY `idx_operation_type_time` (`operation_type`, `operation_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='工作空间操作日志';
+
 SET FOREIGN_KEY_CHECKS = 1;

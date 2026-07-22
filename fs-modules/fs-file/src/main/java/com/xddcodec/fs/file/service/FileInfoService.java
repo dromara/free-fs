@@ -2,6 +2,7 @@ package com.xddcodec.fs.file.service;
 
 import com.xddcodec.fs.file.domain.FileInfo;
 import com.xddcodec.fs.file.domain.dto.CreateDirectoryCmd;
+import com.xddcodec.fs.file.domain.dto.CopyFileCmd;
 import com.xddcodec.fs.file.domain.dto.MoveFileCmd;
 import com.xddcodec.fs.file.domain.dto.RenameFileCmd;
 import com.xddcodec.fs.file.domain.qry.FileQry;
@@ -91,6 +92,12 @@ public interface FileInfoService extends IService<FileInfo> {
      * @param cmd 移动文件请求参数
      */
     void moveFile(MoveFileCmd cmd);
+
+    /**
+     * 复制文件或文件夹到指定目录。
+     * 复制只新增数据库引用，不重复上传物理对象。
+     */
+    List<FileInfo> copyFiles(CopyFileCmd cmd);
 
     /**
      * 获取目录层级

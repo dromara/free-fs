@@ -9,6 +9,8 @@ import com.xddcodec.fs.file.service.FileShareAccessRecordService;
 import com.xddcodec.fs.file.service.FileShareService;
 import com.xddcodec.fs.framework.common.domain.PageResult;
 import com.xddcodec.fs.framework.common.domain.Result;
+import com.xddcodec.fs.log.constant.OperationType;
+import com.xddcodec.fs.log.service.SysOperationLogService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.extern.slf4j.Slf4j;
@@ -35,6 +37,9 @@ public class FileShareController {
 
     @Autowired
     private FileShareAccessRecordService fileShareAccessRecordService;
+
+    @Autowired
+    private SysOperationLogService operationLogService;
 
     @GetMapping("/pages")
     @Operation(summary = "获取我的分享", description = "分页获取我的分享列表")
@@ -63,6 +68,14 @@ public class FileShareController {
     @SaCheckPermission("file:share")
     public Result<FileShareVO> createDirectory(@RequestBody @Validated CreateShareCmd cmd) {
         FileShareVO fileShareVO = fileShareService.createShare(cmd);
+        operationLogService.recordSuccess(
+                OperationType.CREATE_SHARE,
+                "创建分享",
+                "SHARE",
+                fileShareVO.getId(),
+                fileShareVO.getShareName(),
+                "分享文件数: " + cmd.getFileIds().size()
+        );
         return Result.ok(fileShareVO);
     }
 
@@ -71,6 +84,14 @@ public class FileShareController {
     @SaCheckPermission("file:share")
     public Result<FileShareVO> cancelShares(@RequestBody List<String> ids) {
         fileShareService.cancelShares(ids);
+        operationLogService.recordSuccess(
+                OperationType.CANCEL_SHARE,
+                "取消分享",
+                ids.size() > 1 ? "MULTIPLE" : "SHARE",
+                String.join(",", ids),
+                null,
+                "共取消 " + ids.size() + " 个分享"
+        );
         return Result.ok();
     }
 
@@ -79,6 +100,14 @@ public class FileShareController {
     @SaCheckPermission("file:share")
     public Result<FileShareVO> cancelAllShares() {
         fileShareService.cancelAllShares();
+        operationLogService.recordSuccess(
+                OperationType.CANCEL_SHARE,
+                "清空分享",
+                "SHARE",
+                null,
+                "全部分享",
+                null
+        );
         return Result.ok();
     }
 

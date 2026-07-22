@@ -49,6 +49,7 @@ public class AuthServiceImpl implements AuthService {
         LoginResult result = strategy.authenticate(cmd);
 
         StpUtil.login(result.getId(), cmd.getIsRemember());
+        StpUtil.getSession().set("username", result.getUsername());
         SaTokenInfo tokenInfo = StpUtil.getTokenInfo();
         result.setAccessToken(tokenInfo.getTokenValue());
         //修改最后登录时间

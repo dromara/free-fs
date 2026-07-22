@@ -285,7 +285,8 @@ INSERT INTO "sys_permission" ("id", "permission_code", "permission_name", "modul
                                                                                                                                            (2, 'file:write', '文件编辑', '文件管理', '上传、创建文件夹、删除、移动、重命名、收藏、回收站操作', 2, '2026-04-01 02:44:26', '2026-04-01 02:44:26'),
                                                                                                                                            (3, 'file:share', '文件分享', '文件管理', '创建、管理、取消分享链接', 3, '2026-04-01 02:44:26', '2026-04-01 02:44:26'),
                                                                                                                                            (4, 'storage:manage', '存储管理', '存储管理', '存储源的增删改查及启用禁用', 4, '2026-04-01 02:44:26', '2026-04-01 02:44:26'),
-                                                                                                                                           (5, 'member:manage', '成员管理', '系统管理', '邀请/移除成员、角色管理、权限查看', 5, '2026-04-01 02:44:26', '2026-04-01 02:44:26');
+                                                                                                                                           (5, 'member:manage', '成员管理', '系统管理', '邀请/移除成员、角色管理、权限查看', 5, '2026-04-01 02:44:26', '2026-04-01 02:44:26'),
+                                                                                                                                           (6, 'log:read', '查看操作日志', '系统管理', '查看当前工作空间的文件、分享、成员、角色和存储操作记录', 6, '2026-07-22 00:00:00', '2026-07-22 00:00:00');
 
 -- 用户
 INSERT INTO "sys_user" ("id", "username", "password", "email", "nickname", "avatar", "status", "created_at", "updated_at", "last_login_at")
@@ -305,7 +306,8 @@ INSERT INTO "sys_role" ("id", "workspace_id", "role_code", "role_name", "descrip
 INSERT INTO "sys_role_permission" ("id", "role_id", "role_code", "permission_code") VALUES
                                                                                         (49, 100015, 'admin', 'file:read'), (50, 100015, 'admin', 'file:write'), (51, 100015, 'admin', 'file:share'),
                                                                                         (52, 100015, 'admin', 'storage:manage'), (53, 100015, 'admin', 'member:manage'), (54, 100016, 'member', 'file:read'),
-                                                                                        (55, 100016, 'member', 'file:write'), (56, 100016, 'member', 'file:share'), (57, 100017, 'viewer', 'file:read');
+                                                                                        (55, 100016, 'member', 'file:write'), (56, 100016, 'member', 'file:share'), (57, 100017, 'viewer', 'file:read'),
+                                                                                        (58, 100015, 'admin', 'log:read');
 
 -- 工作空间成员
 INSERT INTO "sys_workspace_member" ("id", "workspace_id", "user_id", "role_id", "joined_at", "updated_at")

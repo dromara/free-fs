@@ -40,7 +40,7 @@ public class LogController {
 
     @Operation(summary = "分页获取当前工作空间操作日志")
     @GetMapping("/operation/pages")
-    @SaCheckPermission("member:manage")
+    @SaCheckPermission("log:read")
     public PageResult<SysOperationLogVO> getOperationPages(OperationLogPageQry qry) {
         return operationLogService.getPages(qry);
     }

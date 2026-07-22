@@ -243,7 +243,7 @@ CREATE TABLE `sys_permission`  (
   `updated_at` datetime NOT NULL,
   PRIMARY KEY (`id`) USING BTREE,
   UNIQUE INDEX `uk_permission_code`(`permission_code` ASC) USING BTREE
-) ENGINE = InnoDB AUTO_INCREMENT = 6 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci COMMENT = '权限表' ROW_FORMAT = Dynamic;
+) ENGINE = InnoDB AUTO_INCREMENT = 7 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci COMMENT = '权限表' ROW_FORMAT = Dynamic;
 
 -- ----------------------------
 -- Records of sys_permission
@@ -253,6 +253,7 @@ INSERT INTO `sys_permission` VALUES (2, 'file:write', '文件编辑', '文件管
 INSERT INTO `sys_permission` VALUES (3, 'file:share', '文件分享', '文件管理', '创建、管理、取消分享链接', 3, '2026-04-01 02:44:26', '2026-04-01 02:44:26');
 INSERT INTO `sys_permission` VALUES (4, 'storage:manage', '存储管理', '存储管理', '存储源的增删改查及启用禁用', 4, '2026-04-01 02:44:26', '2026-04-01 02:44:26');
 INSERT INTO `sys_permission` VALUES (5, 'member:manage', '成员管理', '系统管理', '邀请/移除成员、角色管理、权限查看', 5, '2026-04-01 02:44:26', '2026-04-01 02:44:26');
+INSERT INTO `sys_permission` VALUES (6, 'log:read', '查看操作日志', '系统管理', '查看当前工作空间的文件、分享、成员、角色和存储操作记录', 6, '2026-07-22 00:00:00', '2026-07-22 00:00:00');
 
 -- ----------------------------
 -- Table structure for sys_role
@@ -290,7 +291,7 @@ CREATE TABLE `sys_role_permission`  (
   `permission_code` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT '权限编码',
   PRIMARY KEY (`id`) USING BTREE,
   UNIQUE INDEX `uk_role_permission`(`role_id` ASC, `permission_code` ASC) USING BTREE
-) ENGINE = InnoDB AUTO_INCREMENT = 58 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci COMMENT = '角色权限关联表' ROW_FORMAT = Dynamic;
+) ENGINE = InnoDB AUTO_INCREMENT = 59 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci COMMENT = '角色权限关联表' ROW_FORMAT = Dynamic;
 
 -- ----------------------------
 -- Records of sys_role_permission
@@ -304,6 +305,7 @@ INSERT INTO `sys_role_permission` VALUES (54, 100016, 'member', 'file:read');
 INSERT INTO `sys_role_permission` VALUES (55, 100016, 'member', 'file:write');
 INSERT INTO `sys_role_permission` VALUES (56, 100016, 'member', 'file:share');
 INSERT INTO `sys_role_permission` VALUES (57, 100017, 'viewer', 'file:read');
+INSERT INTO `sys_role_permission` VALUES (58, 100015, 'admin', 'log:read');
 
 -- ----------------------------
 -- Table structure for sys_user

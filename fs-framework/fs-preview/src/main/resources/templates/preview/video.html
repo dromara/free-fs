@@ -74,6 +74,33 @@
             background: var(--color-fill-2);
         }
 
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .compat-btn {
+            border: 1px solid var(--color-border);
+            border-radius: 6px;
+            padding: 6px 10px;
+            background: rgba(255, 255, 255, 0.08);
+            color: var(--color-text-2);
+            font-size: 12px;
+            cursor: pointer;
+            transition: background 0.2s, color 0.2s;
+        }
+
+        .compat-btn:hover:not(:disabled) {
+            background: rgba(255, 255, 255, 0.16);
+            color: var(--color-text-1);
+        }
+
+        .compat-btn:disabled {
+            cursor: default;
+            opacity: 0.7;
+        }
+
         .nav-btn {
             position: fixed;
             top: 50%;
@@ -172,11 +199,16 @@
 <body th:attr="data-file-id=${fileId}">
 <div class="header">
     <span class="file-name" th:text="${fileName}">视频文件名</span>
-    <div class="close-btn" onclick="window.close()" title="关闭">
-        <svg width="24" height="24" viewBox="0 0 48 48" fill="none">
-            <path d="M14 14L34 34" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
-            <path d="M14 34L34 14" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
+    <div class="header-actions">
+        <button id="compatibility-button" class="compat-btn" type="button" onclick="enableCompatiblePlayback()">
+            兼容播放
+        </button>
+        <div class="close-btn" onclick="window.close()" title="关闭">
+            <svg width="24" height="24" viewBox="0 0 48 48" fill="none">
+                <path d="M14 14L34 34" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M14 34L34 14" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+        </div>
     </div>
 </div>
 
@@ -186,7 +218,7 @@
 <div id="video-container">
     <div class="loading-container" id="loading">
         <div class="spinner"></div>
-        <div>正在加载资源...</div>
+        <div id="loading-text">正在加载资源...</div>
     </div>
 
     <div class="error-container" id="error">
@@ -204,39 +236,129 @@
 </div>
 
 <script th:inline="javascript">
-    // 获取服务端变量
     const streamUrl = /*[[${streamUrl}]]*/ '';
-    const fileName = /*[[${fileName}]]*/ '';
+    const extension = String(/*[[${extension}]]*/ '').toLowerCase();
+    const browserFriendlyExtensions = new Set(['mp4', 'webm', 'ogv', 'ogg']);
 
     const video = document.getElementById('video-player');
     const loading = document.getElementById('loading');
+    const loadingText = document.getElementById('loading-text');
     const errorDiv = document.getElementById('error');
+    const compatibilityButton = document.getElementById('compatibility-button');
 
-    function loadVideo() {
+    let usingCompatibility = false;
+    let sourceChanging = false;
+    let resumeAfterCompatibility = false;
+    let frameCheckVersion = 0;
+
+    function createStreamUrl(compatible) {
+        const url = new URL(streamUrl, window.location.origin);
+        const previewToken = new URLSearchParams(window.location.search).get('previewToken');
+        url.searchParams.set('_t', Date.now().toString());
+        url.searchParams.set('_r', Math.random().toString(36).substring(7));
+        if (previewToken) {
+            url.searchParams.set('previewToken', previewToken);
+        }
+        if (compatible) {
+            url.searchParams.set('compatible', 'true');
+        } else {
+            url.searchParams.delete('compatible');
+        }
+        url.hash = 't=0.1';
+        return url.toString();
+    }
+
+    function updateCompatibilityButton(processing) {
+        compatibilityButton.disabled = usingCompatibility;
+        compatibilityButton.textContent = usingCompatibility
+            ? (processing ? '正在兼容处理...' : '兼容模式')
+            : '兼容播放';
+    }
+
+    function loadVideo(forceCompatibility = false) {
         if (!streamUrl) {
             showError('视频路径无效');
             return;
         }
 
-        const urlWithParams = `${streamUrl}?_t=${Date.now()}&_r=${Math.random().toString(36).substring(7)}#t=0.1`;
+        usingCompatibility = forceCompatibility || !browserFriendlyExtensions.has(extension);
+        errorDiv.style.display = 'none';
+        loading.style.display = 'flex';
+        loadingText.textContent = usingCompatibility
+            ? '正在生成浏览器兼容版本，首次处理可能需要一些时间...'
+            : '正在加载资源...';
+        updateCompatibilityButton(usingCompatibility);
+
+        sourceChanging = true;
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
 
         setTimeout(() => {
-            video.src = urlWithParams;
+            video.src = createStreamUrl(usingCompatibility);
             video.style.display = 'block';
+            sourceChanging = false;
+            video.load();
         }, 100);
     }
 
+    function switchToCompatibility() {
+        if (usingCompatibility) return;
+        resumeAfterCompatibility = !video.paused && !video.ended;
+        frameCheckVersion += 1;
+        loadVideo(true);
+    }
+
+    window.enableCompatiblePlayback = function () {
+        switchToCompatibility();
+    };
+
     video.addEventListener('loadedmetadata', function () {
         loading.style.display = 'none';
+        updateCompatibilityButton(false);
+        if (usingCompatibility && resumeAfterCompatibility) {
+            resumeAfterCompatibility = false;
+            video.play().catch(() => {});
+        }
     });
 
     video.addEventListener('canplay', function () {
+        if (!usingCompatibility && video.videoWidth === 0 && video.duration > 0) {
+            switchToCompatibility();
+            return;
+        }
         loading.style.display = 'none';
+        updateCompatibilityButton(false);
+    });
+
+    video.addEventListener('playing', function () {
+        if (usingCompatibility || typeof video.requestVideoFrameCallback !== 'function') return;
+
+        const version = ++frameCheckVersion;
+        let framePresented = false;
+        video.requestVideoFrameCallback(() => {
+            if (version === frameCheckVersion) framePresented = true;
+        });
+        setTimeout(() => {
+            if (
+                version === frameCheckVersion &&
+                !framePresented &&
+                !video.paused &&
+                video.currentTime > 0.5
+            ) {
+                switchToCompatibility();
+            }
+        }, 4000);
     });
 
     video.addEventListener('error', function (e) {
+        if (sourceChanging || !video.currentSrc) return;
         console.error('视频加载错误:', e);
-        showError('视频加载失败，请检查文件是否存在');
+        if (!usingCompatibility) {
+            switchToCompatibility();
+            return;
+        }
+        showError('兼容处理失败，请下载后播放该视频');
     });
 
     function showError(message) {
@@ -248,19 +370,17 @@
         }
     }
 
-    // Disable context menu
     document.addEventListener('contextmenu', (e) => {
         e.preventDefault();
     });
 
-    // Disable drag
     video.addEventListener('dragstart', function (e) {
         e.preventDefault();
         return false;
     });
 
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', loadVideo);
+        document.addEventListener('DOMContentLoaded', () => loadVideo());
     } else {
         loadVideo();
     }

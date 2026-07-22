@@ -2,12 +2,17 @@ package com.xddcodec.fs.file.controller;
 
 import com.xddcodec.fs.file.domain.FileInfo;
 import com.xddcodec.fs.file.preview.ArchiveFilePreviewService;
+import com.xddcodec.fs.file.preview.MediaCompatibilityService;
+import com.xddcodec.fs.file.preview.MediaCompatibilityService.CompatibleMedia;
+import com.xddcodec.fs.file.preview.MediaCompatibilityService.MediaCompatibilityException;
 import com.xddcodec.fs.file.service.FileInfoService;
+import com.xddcodec.fs.framework.common.constant.RedisKey;
 import com.xddcodec.fs.framework.common.enums.FileTypeEnum;
 import com.xddcodec.fs.framework.preview.config.FilePreviewConfig;
 import com.xddcodec.fs.framework.preview.core.PreviewStrategy;
 import com.xddcodec.fs.framework.preview.factory.PreviewStrategyManager;
 import com.xddcodec.fs.framework.preview.strategy.impl.archive.ArchiveUtil;
+import com.xddcodec.fs.framework.redis.repository.RedisRepository;
 import com.xddcodec.fs.storage.facade.StorageServiceFacade;
 import com.xddcodec.fs.storage.plugin.core.IStorageOperationService;
 import lombok.RequiredArgsConstructor;
@@ -26,6 +31,10 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.nio.channels.Channels;
+import java.nio.channels.SeekableByteChannel;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -46,13 +55,17 @@ public class FileStreamController {
     private final FilePreviewConfig previewConfig;
     private final PreviewStrategyManager strategyManager;
     private final ArchiveFilePreviewService archiveFilePreviewService;
+    private final MediaCompatibilityService mediaCompatibilityService;
+    private final RedisRepository redisRepository;
 
     private static final Pattern RANGE_PATTERN = Pattern.compile("bytes=(\\d*)-(\\d*)");
 
     @GetMapping("/preview/{fileId}")
     public ResponseEntity<StreamingResponseBody> preview(
             @PathVariable String fileId,
-            @RequestHeader(value = HttpHeaders.RANGE, required = false) String rangeHeader) {
+            @RequestHeader(value = HttpHeaders.RANGE, required = false) String rangeHeader,
+            @RequestParam(value = "compatible", defaultValue = "false") boolean compatible,
+            @RequestParam(value = "previewToken", required = false) String previewToken) {
 
         FileInfo fileInfo = fileInfoService.getById(fileId);
         if (fileInfo == null) {
@@ -67,6 +80,22 @@ public class FileStreamController {
 
         log.info("文件: {}, 类型: {}, 匹配策略: {}", fileInfo.getDisplayName(), fileType, strategy.getClass().getSimpleName());
 
+        if (compatible) {
+            if (!isValidPreviewToken(fileId, previewToken)) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+            }
+            if (mediaCompatibilityService.isSupported(fileType)) {
+                Long maxFileSize = previewConfig.getMaxFileSize();
+                if (maxFileSize != null
+                        && maxFileSize > 0
+                        && fileInfo.getSize() != null
+                        && fileInfo.getSize() > maxFileSize) {
+                    return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).build();
+                }
+                return handleCompatibleMediaRequest(storage, fileInfo, fileType, rangeHeader);
+            }
+        }
+
         // 修复逻辑：如果策略不支持Range（说明是转换流，如Docx转PDF），则强制走FullRequest
         // 即使前端传了Range头也不处理，防止截断
         if (!strategy.supportRange() || rangeHeader == null || !rangeHeader.startsWith("bytes=")) {
@@ -74,6 +103,29 @@ public class FileStreamController {
         }
 
         return handleRangeRequest(storage, fileInfo, strategy, rangeHeader);
+    }
+
+    private boolean isValidPreviewToken(String fileId, String previewToken) {
+        if (previewToken == null || previewToken.isBlank()) {
+            return false;
+        }
+        String tokenKey = RedisKey.getPreviewTokenKey(previewToken);
+        Object cachedFileId = redisRepository.get(tokenKey);
+        if (cachedFileId == null || !fileId.equals(String.valueOf(cachedFileId))) {
+            return false;
+        }
+
+        Long transcodeTimeout = previewConfig.getMediaCompatibility().getTranscodeTimeoutSeconds();
+        long compatibilityTtl = Math.min(
+                24 * 60 * 60L,
+                Math.max(
+                        RedisKey.PREVIEW_TOKEN_EXPIRE,
+                        (transcodeTimeout == null ? 7200L : Math.max(1L, transcodeTimeout)) + 3600L
+                )
+        );
+        redisRepository.expire(tokenKey, compatibilityTtl);
+        redisRepository.expire(RedisKey.getPreviewWorkspaceKey(previewToken), compatibilityTtl);
+        return true;
     }
 
     private ResponseEntity<StreamingResponseBody> handleFullRequest(
@@ -134,6 +186,135 @@ public class FileStreamController {
                 String.format("bytes %d-%d/%d", finalStart, finalEnd, fileSize));
 
         return ResponseEntity.status(HttpStatus.PARTIAL_CONTENT).headers(headers).body(stream);
+    }
+
+    private ResponseEntity<StreamingResponseBody> handleCompatibleMediaRequest(
+            IStorageOperationService storage,
+            FileInfo fileInfo,
+            FileTypeEnum fileType,
+            String rangeHeader) {
+        final CompatibleMedia compatibleMedia;
+        try {
+            compatibleMedia = mediaCompatibilityService.prepareCompatibleMedia(fileInfo, storage, fileType);
+        } catch (MediaCompatibilityException e) {
+            log.warn("媒体兼容处理失败: fileId={}, fileName={}, reason={}",
+                    fileInfo.getId(), fileInfo.getDisplayName(), e.getMessage());
+            return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).build();
+        }
+
+        try {
+            if (rangeHeader == null || !rangeHeader.startsWith("bytes=")) {
+                return handleCompatibleFullRequest(fileInfo, compatibleMedia);
+            }
+            return handleCompatibleRangeRequest(fileInfo, compatibleMedia, rangeHeader);
+        } catch (IOException e) {
+            log.warn("读取兼容媒体缓存失败: fileId={}, path={}", fileInfo.getId(), compatibleMedia.path());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    private ResponseEntity<StreamingResponseBody> handleCompatibleFullRequest(
+            FileInfo fileInfo,
+            CompatibleMedia compatibleMedia) throws IOException {
+        Path path = compatibleMedia.path();
+        long contentLength = Files.size(path);
+        StreamingResponseBody stream = outputStream -> {
+            try (InputStream inputStream = Files.newInputStream(path)) {
+                copyStream(inputStream, outputStream);
+            } catch (IOException e) {
+                log.debug("兼容媒体完整流传输中断: {}", fileInfo.getDisplayName());
+            }
+        };
+
+        HttpHeaders headers = buildCompatibleHeaders(
+                fileInfo, compatibleMedia.extension(), contentLength);
+        return ResponseEntity.ok().headers(headers).body(stream);
+    }
+
+    private ResponseEntity<StreamingResponseBody> handleCompatibleRangeRequest(
+            FileInfo fileInfo,
+            CompatibleMedia compatibleMedia,
+            String rangeHeader) throws IOException {
+        Path path = compatibleMedia.path();
+        long fileSize = Files.size(path);
+        Matcher matcher = RANGE_PATTERN.matcher(rangeHeader);
+        if (!matcher.matches()) {
+            return ResponseEntity.status(HttpStatus.REQUESTED_RANGE_NOT_SATISFIABLE).build();
+        }
+
+        String startGroup = matcher.group(1);
+        String endGroup = matcher.group(2);
+        long start;
+        long end;
+        try {
+            if (startGroup.isEmpty()) {
+                long suffixLength = Long.parseLong(endGroup);
+                if (suffixLength <= 0) {
+                    return ResponseEntity.status(HttpStatus.REQUESTED_RANGE_NOT_SATISFIABLE).build();
+                }
+                start = Math.max(0, fileSize - suffixLength);
+                end = fileSize - 1;
+            } else {
+                start = Long.parseLong(startGroup);
+                end = endGroup.isEmpty()
+                        ? fileSize - 1
+                        : Math.min(Long.parseLong(endGroup), fileSize - 1);
+            }
+        } catch (NumberFormatException e) {
+            return ResponseEntity.status(HttpStatus.REQUESTED_RANGE_NOT_SATISFIABLE).build();
+        }
+
+        if (start < 0 || start >= fileSize || end < start) {
+            HttpHeaders headers = new HttpHeaders();
+            headers.set(HttpHeaders.CONTENT_RANGE, "bytes */" + fileSize);
+            return ResponseEntity.status(HttpStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+                    .headers(headers)
+                    .build();
+        }
+
+        long maxRangeSize = previewConfig.getMaxRangeSize();
+        if (end - start + 1 > maxRangeSize) {
+            end = start + maxRangeSize - 1;
+        }
+
+        final long finalStart = start;
+        final long finalEnd = end;
+        final long contentLength = finalEnd - finalStart + 1;
+        StreamingResponseBody stream = outputStream -> {
+            try {
+                SeekableByteChannel channel = Files.newByteChannel(path);
+                channel.position(finalStart);
+                try (InputStream inputStream = Channels.newInputStream(channel)) {
+                    copyStreamLimited(inputStream, outputStream, contentLength);
+                }
+            } catch (IOException e) {
+                log.debug("兼容媒体 Range 流传输中断: {}", fileInfo.getDisplayName());
+            }
+        };
+
+        HttpHeaders headers = buildCompatibleHeaders(
+                fileInfo, compatibleMedia.extension(), contentLength);
+        headers.set(HttpHeaders.CONTENT_RANGE,
+                String.format("bytes %d-%d/%d", finalStart, finalEnd, fileSize));
+        return ResponseEntity.status(HttpStatus.PARTIAL_CONTENT).headers(headers).body(stream);
+    }
+
+    private HttpHeaders buildCompatibleHeaders(
+            FileInfo fileInfo,
+            String extension,
+            long contentLength) {
+        HttpHeaders headers = new HttpHeaders();
+        MediaType mediaType = "mp4".equalsIgnoreCase(extension)
+                ? MediaType.parseMediaType("video/mp4")
+                : MediaType.parseMediaType("audio/mpeg");
+        headers.setContentType(mediaType);
+        headers.setContentLength(contentLength);
+        headers.set(HttpHeaders.CONTENT_DISPOSITION,
+                "inline; filename*=UTF-8''" + encodeFileName(
+                        changeExtension(fileInfo.getDisplayName(), extension)));
+        headers.set(HttpHeaders.ACCEPT_RANGES, "bytes");
+        headers.setCacheControl("private, max-age=86400");
+        return headers;
     }
 
     /**

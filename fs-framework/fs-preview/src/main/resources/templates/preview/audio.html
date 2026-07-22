@@ -120,6 +120,28 @@
             filter: invert(1) hue-rotate(180deg); /* Simple dark mode for default audio player */
         }
 
+        .compat-btn {
+            margin-top: 18px;
+            border: 1px solid var(--color-border);
+            border-radius: 6px;
+            padding: 7px 12px;
+            background: rgba(255, 255, 255, 0.08);
+            color: var(--color-text-2);
+            font-size: 12px;
+            cursor: pointer;
+            transition: background 0.2s, color 0.2s;
+        }
+
+        .compat-btn:hover:not(:disabled) {
+            background: rgba(255, 255, 255, 0.16);
+            color: var(--color-text-1);
+        }
+
+        .compat-btn:disabled {
+            cursor: default;
+            opacity: 0.7;
+        }
+
         /* Loading & Error */
         .loading-container, .error-container {
             position: absolute;
@@ -181,7 +203,7 @@
 <div id="audio-container">
     <div class="loading-container" id="loading">
         <div class="spinner"></div>
-        <div>正在加载资源...</div>
+        <div id="loading-text">正在加载资源...</div>
     </div>
 
     <div class="error-container" id="error">
@@ -200,20 +222,31 @@
                controlslist="nodownload">
             您的浏览器不支持音频播放
         </audio>
+        <button id="compatibility-button" class="compat-btn" type="button" onclick="enableCompatiblePlayback()">
+            兼容播放
+        </button>
     </div>
 </div>
 
 <script th:inline="javascript">
-    // 获取服务端变量
     const streamUrl = /*[[${streamUrl}]]*/ '';
-    const fileName = /*[[${fileName}]]*/ '';
+    const extension = String(/*[[${extension}]]*/ '').toLowerCase();
     const fileSize = /*[[${fileSize}]]*/ 0;
+    const browserFriendlyExtensions = new Set([
+        'mp3', 'wav', 'flac', 'aac', 'ogg', 'oga', 'opus', 'm4a'
+    ]);
 
     const audio = document.getElementById('audio-player');
     const loading = document.getElementById('loading');
+    const loadingText = document.getElementById('loading-text');
     const errorDiv = document.getElementById('error');
     const audioCard = document.getElementById('audio-card');
     const audioInfo = document.getElementById('audio-info');
+    const compatibilityButton = document.getElementById('compatibility-button');
+
+    let usingCompatibility = false;
+    let sourceChanging = false;
+    let resumeAfterCompatibility = false;
 
     // 格式化文件大小
     function formatFileSize(bytes) {
@@ -226,39 +259,97 @@
 
     // 格式化时长
     function formatDuration(seconds) {
+        if (!Number.isFinite(seconds) || seconds < 0) return '--:--';
         const mins = Math.floor(seconds / 60);
         const secs = Math.floor(seconds % 60);
         return `${mins}:${secs.toString().padStart(2, '0')}`;
     }
 
-    function loadAudio() {
+    function createStreamUrl(compatible) {
+        const url = new URL(streamUrl, window.location.origin);
+        const previewToken = new URLSearchParams(window.location.search).get('previewToken');
+        url.searchParams.set('_t', Date.now().toString());
+        url.searchParams.set('_r', Math.random().toString(36).substring(7));
+        if (previewToken) {
+            url.searchParams.set('previewToken', previewToken);
+        }
+        if (compatible) {
+            url.searchParams.set('compatible', 'true');
+        } else {
+            url.searchParams.delete('compatible');
+        }
+        return url.toString();
+    }
+
+    function updateCompatibilityButton(processing) {
+        compatibilityButton.disabled = usingCompatibility;
+        compatibilityButton.textContent = usingCompatibility
+            ? (processing ? '正在兼容处理...' : '兼容模式')
+            : '兼容播放';
+    }
+
+    function loadAudio(forceCompatibility = false) {
         if (!streamUrl) {
             showError('音频路径无效');
             return;
         }
 
-        const urlWithParams = `${streamUrl}?_t=${Date.now()}&_r=${Math.random().toString(36).substring(7)}`;
+        usingCompatibility = forceCompatibility || !browserFriendlyExtensions.has(extension);
+        errorDiv.style.display = 'none';
+        loading.style.display = 'flex';
+        loadingText.textContent = usingCompatibility
+            ? '正在生成浏览器兼容版本，首次处理可能需要一些时间...'
+            : '正在加载资源...';
+        updateCompatibilityButton(usingCompatibility);
+
+        sourceChanging = true;
+        audio.pause();
+        audio.removeAttribute('src');
+        audio.load();
 
         setTimeout(() => {
-            audio.src = urlWithParams;
+            audio.src = createStreamUrl(usingCompatibility);
             audioCard.style.display = 'block';
+            sourceChanging = false;
+            audio.load();
         }, 100);
     }
+
+    function switchToCompatibility() {
+        if (usingCompatibility) return;
+        resumeAfterCompatibility = !audio.paused && !audio.ended;
+        loadAudio(true);
+    }
+
+    window.enableCompatiblePlayback = function () {
+        switchToCompatibility();
+    };
 
     audio.addEventListener('loadedmetadata', function () {
         loading.style.display = 'none';
         const duration = formatDuration(audio.duration);
         const size = formatFileSize(fileSize);
-        audioInfo.textContent = `时长: ${duration} | 大小: ${size}`;
+        audioInfo.textContent = `时长: ${duration} | 大小: ${size}${usingCompatibility ? ' | 兼容模式' : ''}`;
+        updateCompatibilityButton(false);
+        if (usingCompatibility && resumeAfterCompatibility) {
+            resumeAfterCompatibility = false;
+            audio.play().catch(() => {});
+        }
     });
 
     audio.addEventListener('canplay', function () {
         loading.style.display = 'none';
+        updateCompatibilityButton(false);
     });
 
     audio.addEventListener('error', function (e) {
+        if (sourceChanging || !audio.currentSrc) return;
         console.error('音频加载错误:', e);
-        showError('音频加载失败，请检查文件是否存在');
+        if (!usingCompatibility) {
+            switchToCompatibility();
+            return;
+        }
+        showError('兼容处理失败，请下载后播放该音频');
     });
 
     function showError(message) {
@@ -270,13 +361,12 @@
         }
     }
 
-    // Disable context menu
     document.addEventListener('contextmenu', (e) => {
         e.preventDefault();
     });
 
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', loadAudio);
+        document.addEventListener('DOMContentLoaded', () => loadAudio());
     } else {
         loadAudio();
     }

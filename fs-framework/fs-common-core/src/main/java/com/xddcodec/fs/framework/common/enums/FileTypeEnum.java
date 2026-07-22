@@ -23,18 +23,14 @@ public enum FileTypeEnum {
 
     // ==================== 视频类型 ====================
     VIDEO("video", "视频", FileCategory.VIDEO, Arrays.asList(
-            "mp4", "m4v", "avi", "mkv", "mov", "wmv", "flv", "webm",
-            "3gp", "ts", "mts", "m2ts", "ogv",
-            "MP4", "M4V", "AVI", "MKV", "MOV", "WMV", "FLV", "WEBM",
-            "3GP", "TS", "MTS", "M2TS", "OGV"
+            "mp4", "avi", "mkv", "mov", "wmv", "flv", "webm",
+            "MP4", "AVI", "MKV", "MOV", "WMV", "FLV", "WEBM"
     )),
 
     // ==================== 音频类型 ====================
     AUDIO("audio", "音频", FileCategory.AUDIO, Arrays.asList(
-            "mp3", "wav", "flac", "aac", "ogg", "oga", "opus", "m4a", "wma",
-            "aiff", "aif", "ape",
-            "MP3", "WAV", "FLAC", "AAC", "OGG", "OGA", "OPUS", "M4A", "WMA",
-            "AIFF", "AIF", "APE"
+            "mp3", "wav", "flac", "aac", "ogg", "m4a", "wma",
+            "MP3", "WAV", "FLAC", "AAC", "OGG", "M4A", "WMA"
     )),
 
     // ==================== 文档类型 ====================

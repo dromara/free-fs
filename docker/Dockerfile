@@ -9,7 +9,6 @@ RUN sed -i 's@//.*archive.ubuntu.com@//mirrors.aliyun.com@g' /etc/apt/sources.li
         openjdk-21-jre \
         tzdata \
         locales \
-        ffmpeg \
         xfonts-utils \
         fontconfig \
         libreoffice-nogui \

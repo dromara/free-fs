@@ -671,9 +671,10 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
             // 父目录逻辑：判断是否是特殊筛选视图
             boolean isTypeFilter = StrUtil.isNotBlank(qry.getFileType());
             boolean isFavoriteView = Boolean.TRUE.equals(qry.getIsFavorite()) && qry.getParentId() == null;
-            boolean isDirFilter = CommonConstant.Y.equals(qry.getIsDir()) && qry.getParentId() == null;
+            boolean isDirFilter = Boolean.TRUE.equals(qry.getIsDir()) && qry.getParentId() == null;
+            boolean isWorkspaceSearch = StrUtil.isNotBlank(qry.getKeyword()) && qry.getParentId() == null;
 
-            if (!isTypeFilter && !isFavoriteView && !isDirFilter) {
+            if (!isTypeFilter && !isFavoriteView && !isDirFilter && !isWorkspaceSearch) {
                 if (qry.getParentId() == null) {
                     wrapper.and(FILE_INFO.PARENT_ID.isNull());
                 } else {

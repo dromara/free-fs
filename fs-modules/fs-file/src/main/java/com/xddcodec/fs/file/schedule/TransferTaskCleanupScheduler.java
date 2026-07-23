@@ -1,10 +1,14 @@
 package com.xddcodec.fs.file.schedule;
 
+import cn.hutool.core.util.StrUtil;
 import com.mybatisflex.core.query.QueryWrapper;
 import com.xddcodec.fs.file.cache.TransferTaskCacheManager;
 import com.xddcodec.fs.file.domain.FileTransferTask;
 import com.xddcodec.fs.file.enums.TransferTaskStatus;
+import com.xddcodec.fs.file.enums.TransferTaskType;
 import com.xddcodec.fs.file.service.FileTransferTaskService;
+import com.xddcodec.fs.storage.facade.StorageServiceFacade;
+import com.xddcodec.fs.storage.plugin.core.IStorageOperationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -30,6 +34,7 @@ public class TransferTaskCleanupScheduler {
 
     private final FileTransferTaskService fileTransferTaskService;
     private final TransferTaskCacheManager cacheManager;
+    private final StorageServiceFacade storageServiceFacade;
 
     /**
      * 清理过期的传输任务记录
@@ -83,15 +88,21 @@ public class TransferTaskCleanupScheduler {
                 log.info("清理失败的任务: count={}", failedTasks.size());
             }
             
-            // 清理长时间未活动的初始化或暂停任务（3天前）
+            // 清理长时间未活动的未完成任务（3天前）
             QueryWrapper inactiveQuery = new QueryWrapper();
             inactiveQuery.where(
-                FILE_TRANSFER_TASK.STATUS.in(TransferTaskStatus.initialized, TransferTaskStatus.paused)
+                FILE_TRANSFER_TASK.STATUS.in(
+                        TransferTaskStatus.initialized,
+                        TransferTaskStatus.checking,
+                        TransferTaskStatus.uploading,
+                        TransferTaskStatus.paused,
+                        TransferTaskStatus.merging)
                     .and(FILE_TRANSFER_TASK.UPDATED_AT.lt(threeDaysAgo))
             );
             List<FileTransferTask> inactiveTasks = fileTransferTaskService.list(inactiveQuery);
             
             if (!inactiveTasks.isEmpty()) {
+                abortIncompleteMultipartUploads(inactiveTasks);
                 List<String> taskIds = inactiveTasks.stream()
                         .map(FileTransferTask::getTaskId)
                         .collect(Collectors.toList());
@@ -107,6 +118,24 @@ public class TransferTaskCleanupScheduler {
             
         } catch (Exception e) {
             log.error("清理过期传输任务失败", e);
+        }
+    }
+
+    private void abortIncompleteMultipartUploads(List<FileTransferTask> tasks) {
+        for (FileTransferTask task : tasks) {
+            if (!TransferTaskType.upload.equals(task.getTaskType())
+                    || StrUtil.isBlank(task.getUploadId())
+                    || StrUtil.isBlank(task.getObjectKey())) {
+                continue;
+            }
+            try {
+                IStorageOperationService storageService = storageServiceFacade
+                        .getStorageService(task.getStoragePlatformSettingId());
+                storageService.abortMultipartUpload(task.getObjectKey(), task.getUploadId());
+            } catch (Exception e) {
+                log.warn("清理过期分片上传失败: taskId={}, uploadId={}",
+                        task.getTaskId(), task.getUploadId(), e);
+            }
         }
     }
 }

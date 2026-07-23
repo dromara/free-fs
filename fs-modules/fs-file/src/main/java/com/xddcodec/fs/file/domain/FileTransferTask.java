@@ -44,6 +44,14 @@ public class FileTransferTask extends BaseEntity {
      */
     private String workspaceId;
     /**
+     * 文件收集ID（普通上传为空）
+     */
+    private String collectionId;
+    /**
+     * 文件收集提交记录ID（普通上传为空）
+     */
+    private String collectionSubmissionId;
+    /**
      * 父目录ID
      */
     private String parentId;

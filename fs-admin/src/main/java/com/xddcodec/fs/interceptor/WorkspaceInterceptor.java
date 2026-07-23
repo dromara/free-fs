@@ -44,6 +44,7 @@ public class WorkspaceInterceptor implements HandlerInterceptor {
             "/apis/workspace/check-slug",
             "/apis/permission/list",
             "/apis/transfer/sse",
+            "/apis/file-collections/public",
             "/apis/invitation/verify",  // 邀请验证接口（公开）
             "/apis/invitation/accept"   // 邀请接受接口（需登录但不需要工作空间）
     );

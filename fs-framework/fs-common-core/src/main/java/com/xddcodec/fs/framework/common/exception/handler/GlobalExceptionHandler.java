@@ -119,12 +119,11 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * BusinessException 业务异常处理
-     * 返回状态码:500
+     * BusinessException 业务异常处理，保留业务层给出的状态码。
      */
     @ExceptionHandler(BusinessException.class)
     public Result<?> handleBusinessException(BusinessException e) {
-        return defHandler(e.getMessage(), e);
+        return Result.error(e.getCode(), e.getMessage(), null);
     }
 
 

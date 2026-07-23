@@ -133,6 +133,7 @@ security:
     - /apis/share/verify/code
     - /apis/share/**/info
     - /apis/share/**/download/**
+    - /apis/file-collections/public/**
     - /dav/**
     - /webdav-test/**
 

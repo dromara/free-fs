@@ -74,6 +74,53 @@ CREATE TABLE "file_shares" (
                                PRIMARY KEY ("id")
 );
 
+-- 4a. file_collections
+DROP TABLE IF EXISTS "file_collections";
+CREATE TABLE "file_collections" (
+                                      "id" varchar(128) NOT NULL,
+                                      "user_id" varchar(128) NOT NULL,
+                                      "workspace_id" varchar(128) NOT NULL,
+                                      "target_folder_id" varchar(128) NOT NULL,
+                                      "storage_platform_setting_id" varchar(128) DEFAULT NULL,
+                                      "collection_name" varchar(255) NOT NULL,
+                                      "description" varchar(1000) DEFAULT NULL,
+                                      "access_code_hash" varchar(255) DEFAULT NULL,
+                                      "expire_time" timestamp DEFAULT NULL,
+                                      "max_file_size" bigint NOT NULL DEFAULT 1073741824,
+                                      "allowed_extensions" varchar(1000) DEFAULT NULL,
+                                      "status" varchar(20) NOT NULL DEFAULT 'OPEN',
+                                      "submission_count" int NOT NULL DEFAULT 0,
+                                      "file_count" int NOT NULL DEFAULT 0,
+                                      "total_size" bigint NOT NULL DEFAULT 0,
+                                      "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                      "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                      PRIMARY KEY ("id")
+);
+CREATE INDEX "idx_collection_workspace_status" ON "file_collections" ("workspace_id", "status", "created_at");
+CREATE INDEX "idx_collection_target_folder" ON "file_collections" ("target_folder_id");
+CREATE INDEX "idx_collection_user" ON "file_collections" ("user_id");
+
+-- 4b. file_collection_submissions
+DROP TABLE IF EXISTS "file_collection_submissions";
+CREATE TABLE "file_collection_submissions" (
+                                                 "id" varchar(128) NOT NULL,
+                                                 "collection_id" varchar(128) NOT NULL,
+                                                 "submitter_name" varchar(64) NOT NULL,
+                                                 "submitter_ip" varchar(50) DEFAULT NULL,
+                                                 "user_agent" varchar(512) DEFAULT NULL,
+                                                 "folder_id" varchar(128) NOT NULL,
+                                                 "upload_token_hash" varchar(64) NOT NULL,
+                                                 "file_count" int NOT NULL DEFAULT 0,
+                                                 "total_size" bigint NOT NULL DEFAULT 0,
+                                                 "status" varchar(20) NOT NULL DEFAULT 'UPLOADING',
+                                                 "completed_at" timestamp DEFAULT NULL,
+                                                 "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                                 "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                                 PRIMARY KEY ("id")
+);
+CREATE INDEX "idx_submission_collection_time" ON "file_collection_submissions" ("collection_id", "created_at");
+CREATE INDEX "idx_submission_folder" ON "file_collection_submissions" ("folder_id");
+
 -- 5. file_transfer_task
 DROP TABLE IF EXISTS "file_transfer_task";
 CREATE TABLE "file_transfer_task" (
@@ -83,6 +130,8 @@ CREATE TABLE "file_transfer_task" (
                                       "parent_id" varchar(128) DEFAULT NULL,
                                       "user_id" varchar(128) NOT NULL,
                                       "workspace_id" varchar(128) NOT NULL,
+                                      "collection_id" varchar(128) DEFAULT NULL,
+                                      "collection_submission_id" varchar(128) DEFAULT NULL,
                                       "storage_platform_setting_id" varchar(255) DEFAULT NULL,
                                       "object_key" varchar(255) NOT NULL,
                                       "file_id" varchar(128) DEFAULT NULL,
@@ -104,6 +153,8 @@ CREATE TABLE "file_transfer_task" (
                                       "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
                                       CONSTRAINT "uk_task_id" UNIQUE ("task_id")
 );
+CREATE INDEX "idx_transfer_collection_submission" ON "file_transfer_task" ("collection_submission_id");
+CREATE INDEX "idx_transfer_collection" ON "file_transfer_task" ("collection_id");
 
 -- 6. file_user_favorites
 DROP TABLE IF EXISTS "file_user_favorites";

@@ -1,6 +1,7 @@
 package com.xddcodec.fs.file.controller;
 
 import cn.dev33.satoken.annotation.SaCheckPermission;
+import cn.dev33.satoken.annotation.SaMode;
 import com.xddcodec.fs.file.domain.dto.CreateFileCollectionCmd;
 import com.xddcodec.fs.file.domain.dto.UpdateFileCollectionStatusCmd;
 import com.xddcodec.fs.file.domain.qry.FileCollectionQry;
@@ -47,7 +48,7 @@ public class FileCollectionController {
     }
 
     @PostMapping("/create")
-    @SaCheckPermission("file:share")
+    @SaCheckPermission(value = {"file:share", "file:write"}, mode = SaMode.AND)
     @Operation(summary = "创建文件收集")
     public Result<FileCollectionVO> createCollection(
             @RequestBody @Validated CreateFileCollectionCmd cmd) {

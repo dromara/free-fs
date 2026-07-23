@@ -31,6 +31,9 @@ import com.xddcodec.fs.framework.common.exception.BusinessException;
 import com.xddcodec.fs.framework.common.utils.IpUtils;
 import com.xddcodec.fs.framework.redis.repository.RedisRepository;
 import com.xddcodec.fs.system.auth.PasswordHashService;
+import com.xddcodec.fs.system.domain.SysWorkspaceMember;
+import com.xddcodec.fs.system.service.SysRolePermissionService;
+import com.xddcodec.fs.system.service.SysWorkspaceMemberService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -65,6 +68,8 @@ public class FileCollectionServiceImpl
     private final FileCollectionSubmissionMapper submissionMapper;
     private final PasswordHashService passwordHashService;
     private final RedisRepository redisRepository;
+    private final SysWorkspaceMemberService workspaceMemberService;
+    private final SysRolePermissionService rolePermissionService;
 
     @Override
     public PageResult<FileCollectionVO> getPages(FileCollectionQry qry) {
@@ -148,6 +153,12 @@ public class FileCollectionServiceImpl
     @Transactional(rollbackFor = Exception.class)
     public FileCollectionVO updateStatus(String collectionId, FileCollectionStatus status) {
         FileCollection collection = getOwnedCollection(collectionId);
+        if (FileCollectionStatus.OPEN.equals(status)) {
+            if (!StpUtil.hasPermission("file:write")) {
+                throw new BusinessException(403, "没有上传权限，无法重新开启文件收集");
+            }
+            ensureCollectionOwnerCanCollect(collection);
+        }
         collection.setStatus(status);
         collection.setUpdatedAt(LocalDateTime.now());
         this.updateById(collection);
@@ -177,6 +188,7 @@ public class FileCollectionServiceImpl
     @Override
     public FileCollectionPublicVO getPublicInfo(String collectionId) {
         FileCollection collection = getCollection(collectionId);
+        ensureCollectionOwnerCanCollect(collection);
         FileCollectionPublicVO vo = new FileCollectionPublicVO();
         vo.setId(collection.getId());
         vo.setCollectionName(collection.getCollectionName());
@@ -195,6 +207,7 @@ public class FileCollectionServiceImpl
     public FileCollectionSubmissionSessionVO startSubmission(
             String collectionId, CreateFileCollectionSubmissionCmd cmd) {
         FileCollection collection = getActiveCollection(collectionId);
+        ensureCollectionOwnerCanCollect(collection);
         String ip = IpUtils.getIpAddr();
         checkSubmissionRateLimit(collectionId, ip);
         verifyAccessCode(collection, cmd.getAccessCode(), ip);
@@ -345,6 +358,21 @@ public class FileCollectionServiceImpl
             throw new BusinessException(400, "文件收集已过期");
         }
         return collection;
+    }
+
+    private void ensureCollectionOwnerCanCollect(FileCollection collection) {
+        SysWorkspaceMember owner = workspaceMemberService.findByWorkspaceAndUser(
+                collection.getWorkspaceId(), collection.getUserId());
+        if (owner == null) {
+            throw new BusinessException(403, "文件收集创建者已不在工作空间，收集已停用");
+        }
+        List<String> permissions = rolePermissionService
+                .getPermissionCodesByRoleId(owner.getRoleId());
+        if (permissions == null
+                || !permissions.contains("file:share")
+                || !permissions.contains("file:write")) {
+            throw new BusinessException(403, "文件收集创建者已无分享或上传权限，收集已停用");
+        }
     }
 
     private void verifyAccessCode(FileCollection collection, String accessCode, String ip) {

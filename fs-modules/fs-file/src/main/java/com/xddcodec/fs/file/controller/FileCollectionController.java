@@ -6,6 +6,7 @@ import com.xddcodec.fs.file.domain.dto.CreateFileCollectionCmd;
 import com.xddcodec.fs.file.domain.dto.UpdateFileCollectionStatusCmd;
 import com.xddcodec.fs.file.domain.qry.FileCollectionQry;
 import com.xddcodec.fs.file.domain.qry.FileCollectionSubmissionQry;
+import com.xddcodec.fs.file.domain.vo.FileCollectionDeletionResult;
 import com.xddcodec.fs.file.domain.vo.FileCollectionSubmissionVO;
 import com.xddcodec.fs.file.domain.vo.FileCollectionVO;
 import com.xddcodec.fs.file.service.FileCollectionService;
@@ -18,6 +19,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -79,6 +81,24 @@ public class FileCollectionController {
                 collection.getCollectionName(),
                 "状态: " + collection.getStatus());
         return Result.ok(collection);
+    }
+
+    @DeleteMapping("/{collectionId}")
+    @SaCheckPermission(value = {"file:share", "file:write"}, mode = SaMode.AND)
+    @Operation(summary = "删除文件收集")
+    public Result<Void> deleteCollection(@PathVariable String collectionId) {
+        FileCollectionDeletionResult deletion = fileCollectionService.deleteCollection(collectionId);
+        FileCollectionVO collection = deletion.collection();
+        operationLogService.recordSuccess(
+                OperationType.DELETE_COLLECTION,
+                "删除文件收集",
+                "FILE_COLLECTION",
+                collection.getId(),
+                collection.getCollectionName(),
+                "提交记录: " + deletion.submissionCount()
+                        + "，终态传输任务: " + deletion.terminalTaskCount()
+                        + "，已收集文件保留");
+        return Result.ok();
     }
 
     @GetMapping("/{collectionId}/submissions")

@@ -40,7 +40,9 @@ import com.xddcodec.fs.log.service.SysOperationLogService;
 import com.xddcodec.fs.storage.facade.StorageServiceFacade;
 import com.xddcodec.fs.storage.plugin.core.IStorageOperationService;
 import com.xddcodec.fs.storage.plugin.core.context.StoragePlatformContextHolder;
+import com.xddcodec.fs.system.domain.SysUser;
 import com.xddcodec.fs.system.domain.SysUserTransferSetting;
+import com.xddcodec.fs.system.service.SysUserService;
 import com.xddcodec.fs.system.service.SysUserTransferSettingService;
 import io.github.linpeilie.Converter;
 import lombok.RequiredArgsConstructor;
@@ -91,6 +93,7 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
     @Qualifier("fileMergeExecutor")
     private final TaskExecutor fileMergeExecutor;
     private final StorageServiceFacade storageServiceFacade;
+    private final SysUserService sysUserService;
     private final SysUserTransferSettingService userTransferSettingService;
     private final SysOperationLogService operationLogService;
     @Value("${spring.application.name:free-fs}")
@@ -106,10 +109,11 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
         QueryWrapper queryWrapper = new QueryWrapper();
         queryWrapper.where(FILE_TRANSFER_TASK.USER_ID.eq(userId)
                 .and(FILE_TRANSFER_TASK.WORKSPACE_ID.eq(workspaceId))
-                .and(FILE_TRANSFER_TASK.STORAGE_PLATFORM_SETTING_ID.eq(storagePlatformSettingId)));
-//        if (qry.getStatusType() != null) {
-//
-//        }
+                // 公开文件收集上传由专用页面管理，不能混入普通传输列表。
+                .and(FILE_TRANSFER_TASK.COLLECTION_ID.isNull())
+                .and(FILE_TRANSFER_TASK.COLLECTION_SUBMISSION_ID.isNull()));
+        applyStorageScope(queryWrapper, storagePlatformSettingId);
+        applyStatusTypeFilter(queryWrapper, qry == null ? null : qry.getStatusType());
         queryWrapper.orderBy(FILE_TRANSFER_TASK.CREATED_AT.asc());
         List<FileTransferTask> tasks = this.list(queryWrapper);
         List<FileTransferTaskVO> voList = converter.convert(tasks, FileTransferTaskVO.class);
@@ -184,6 +188,50 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
             // 非进行中的任务不显示速度和剩余时间
             vo.setSpeed(null);
             vo.setRemainTime(null);
+        }
+    }
+
+    /**
+     * 存储平台切换前创建的任务可能没有 storage_platform_setting_id，保留这些历史任务，
+     * 否则它们会在旧版本列表中可见、却无法被清空接口命中。
+     */
+    private void applyStorageScope(QueryWrapper queryWrapper, String storagePlatformSettingId) {
+        if (StringUtils.isEmpty(storagePlatformSettingId)) {
+            queryWrapper.and(FILE_TRANSFER_TASK.STORAGE_PLATFORM_SETTING_ID.isNull());
+            return;
+        }
+        queryWrapper.and(FILE_TRANSFER_TASK.STORAGE_PLATFORM_SETTING_ID.eq(storagePlatformSettingId)
+                .or(FILE_TRANSFER_TASK.STORAGE_PLATFORM_SETTING_ID.isNull()));
+    }
+
+    /**
+     * 按传输页面约定的状态类型过滤任务：1 上传中、2 下载中、3 已完成（含失败/取消）。
+     */
+    private void applyStatusTypeFilter(QueryWrapper queryWrapper, Integer statusType) {
+        if (statusType == null) {
+            return;
+        }
+
+        switch (statusType) {
+            case 1 -> queryWrapper.and(FILE_TRANSFER_TASK.TASK_TYPE.eq(TransferTaskType.upload)
+                    .and(FILE_TRANSFER_TASK.STATUS.in(
+                            TransferTaskStatus.initialized,
+                            TransferTaskStatus.checking,
+                            TransferTaskStatus.uploading,
+                            TransferTaskStatus.paused,
+                            TransferTaskStatus.merging)));
+            case 2 -> queryWrapper.and(FILE_TRANSFER_TASK.TASK_TYPE.eq(TransferTaskType.download)
+                    .and(FILE_TRANSFER_TASK.STATUS.in(
+                            TransferTaskStatus.initialized,
+                            TransferTaskStatus.checking,
+                            TransferTaskStatus.downloading,
+                            TransferTaskStatus.paused,
+                            TransferTaskStatus.merging)));
+            case 3 -> queryWrapper.and(FILE_TRANSFER_TASK.STATUS.in(
+                    TransferTaskStatus.completed,
+                    TransferTaskStatus.failed,
+                    TransferTaskStatus.canceled));
+            default -> log.warn("忽略未知的传输状态类型: statusType={}", statusType);
         }
     }
 
@@ -375,13 +423,13 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
             operationLogService.recordSuccessAs(
                     task.getWorkspaceId(),
                     task.getUserId(),
-                    task.getUserId(),
+                    resolveOperatorName(task.getUserId()),
                     OperationType.UPLOAD,
                     "上传文件（秒传）",
                     "FILE",
                     newFileInfo.getId(),
                     newFileInfo.getDisplayName(),
-                    "文件大小: " + newFileInfo.getSize()
+                    "文件大小: " + FileUtils.formatFileSize(newFileInfo.getSize())
             );
 
             // 更新任务状态为已完成
@@ -834,13 +882,13 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
             operationLogService.recordSuccessAs(
                     task.getWorkspaceId(),
                     task.getUserId(),
-                    task.getUserId(),
+                    resolveOperatorName(task.getUserId()),
                     OperationType.UPLOAD,
                     "上传文件",
                     "FILE",
                     fileInfo.getId(),
                     fileInfo.getDisplayName(),
-                    "文件大小: " + fileInfo.getSize()
+                    "文件大小: " + FileUtils.formatFileSize(fileInfo.getSize())
             );
 
             cacheManager.cleanTask(taskId);
@@ -1036,11 +1084,21 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
         String storagePlatformSettingId = StoragePlatformContextHolder.getConfigId();
 
         QueryWrapper queryWrapper = new QueryWrapper();
-        queryWrapper.where(FILE_TRANSFER_TASK.STATUS.eq(TransferTaskStatus.completed))
+        queryWrapper.where(FILE_TRANSFER_TASK.STATUS.in(
+                        TransferTaskStatus.completed,
+                        TransferTaskStatus.failed,
+                        TransferTaskStatus.canceled))
                 .and(FILE_TRANSFER_TASK.USER_ID.eq(userId))
                 .and(FILE_TRANSFER_TASK.WORKSPACE_ID.eq(workspaceId))
-                .and(FILE_TRANSFER_TASK.STORAGE_PLATFORM_SETTING_ID.eq(storagePlatformSettingId));
+                // 文件收集任务由收集记录管理，不能被普通传输页清理。
+                .and(FILE_TRANSFER_TASK.COLLECTION_ID.isNull())
+                .and(FILE_TRANSFER_TASK.COLLECTION_SUBMISSION_ID.isNull());
+        applyStorageScope(queryWrapper, storagePlatformSettingId);
         List<FileTransferTask> tasks = this.list(queryWrapper);
+
+        if (tasks.isEmpty()) {
+            return;
+        }
 
         this.remove(queryWrapper);
 
@@ -1050,6 +1108,30 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
 
         //清除缓存
         cacheManager.cleanTasks(taskIds);
+    }
+
+    /**
+     * 合并任务通常在异步线程完成，不能依赖当前请求线程的 Sa-Token 会话；
+     * 因此按任务中的用户 ID 查询稳定的用户名，避免把 ULID 当作操作人名称。
+     */
+    private String resolveOperatorName(String userId) {
+        if (StringUtils.isEmpty(userId)) {
+            return userId;
+        }
+        try {
+            SysUser user = sysUserService.getById(userId);
+            if (user != null) {
+                if (StringUtils.isNotEmpty(user.getUsername())) {
+                    return user.getUsername();
+                }
+                if (StringUtils.isNotEmpty(user.getNickname())) {
+                    return user.getNickname();
+                }
+            }
+        } catch (Exception e) {
+            log.warn("查询操作日志用户名失败: userId={}", userId, e);
+        }
+        return userId;
     }
 
     @Override

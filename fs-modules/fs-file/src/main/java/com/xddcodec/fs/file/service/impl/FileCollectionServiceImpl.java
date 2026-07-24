@@ -7,13 +7,16 @@ import cn.hutool.core.util.StrUtil;
 import com.mybatisflex.core.paginate.Page;
 import com.mybatisflex.core.query.QueryWrapper;
 import com.mybatisflex.spring.service.impl.ServiceImpl;
+import com.xddcodec.fs.file.cache.TransferTaskCacheManager;
 import com.xddcodec.fs.file.domain.FileCollection;
 import com.xddcodec.fs.file.domain.FileCollectionSubmission;
 import com.xddcodec.fs.file.domain.FileInfo;
+import com.xddcodec.fs.file.domain.FileTransferTask;
 import com.xddcodec.fs.file.domain.dto.CreateFileCollectionCmd;
 import com.xddcodec.fs.file.domain.dto.CreateFileCollectionSubmissionCmd;
 import com.xddcodec.fs.file.domain.qry.FileCollectionQry;
 import com.xddcodec.fs.file.domain.qry.FileCollectionSubmissionQry;
+import com.xddcodec.fs.file.domain.vo.FileCollectionDeletionResult;
 import com.xddcodec.fs.file.domain.vo.FileCollectionPublicVO;
 import com.xddcodec.fs.file.domain.vo.FileCollectionSubmissionSessionVO;
 import com.xddcodec.fs.file.domain.vo.FileCollectionSubmissionVO;
@@ -21,8 +24,10 @@ import com.xddcodec.fs.file.domain.vo.FileCollectionUploadContext;
 import com.xddcodec.fs.file.domain.vo.FileCollectionVO;
 import com.xddcodec.fs.file.enums.FileCollectionStatus;
 import com.xddcodec.fs.file.enums.FileCollectionSubmissionStatus;
+import com.xddcodec.fs.file.enums.TransferTaskStatus;
 import com.xddcodec.fs.file.mapper.FileCollectionMapper;
 import com.xddcodec.fs.file.mapper.FileCollectionSubmissionMapper;
+import com.xddcodec.fs.file.mapper.FileTransferTaskMapper;
 import com.xddcodec.fs.file.service.FileCollectionService;
 import com.xddcodec.fs.file.service.FileInfoService;
 import com.xddcodec.fs.framework.common.context.WorkspaceContext;
@@ -50,6 +55,7 @@ import java.util.stream.Collectors;
 
 import static com.xddcodec.fs.file.domain.table.FileCollectionSubmissionTableDef.FILE_COLLECTION_SUBMISSION;
 import static com.xddcodec.fs.file.domain.table.FileCollectionTableDef.FILE_COLLECTION;
+import static com.xddcodec.fs.file.domain.table.FileTransferTaskTableDef.FILE_TRANSFER_TASK;
 
 @Service
 @RequiredArgsConstructor
@@ -66,6 +72,8 @@ public class FileCollectionServiceImpl
 
     private final FileInfoService fileInfoService;
     private final FileCollectionSubmissionMapper submissionMapper;
+    private final FileTransferTaskMapper transferTaskMapper;
+    private final TransferTaskCacheManager transferTaskCacheManager;
     private final PasswordHashService passwordHashService;
     private final RedisRepository redisRepository;
     private final SysWorkspaceMemberService workspaceMemberService;
@@ -163,6 +171,43 @@ public class FileCollectionServiceImpl
         collection.setUpdatedAt(LocalDateTime.now());
         this.updateById(collection);
         return buildVO(collection);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public FileCollectionDeletionResult deleteCollection(String collectionId) {
+        FileCollection collection = getOwnedCollection(collectionId);
+        FileCollectionVO collectionVO = buildVO(collection);
+
+        QueryWrapper submissionQuery = new QueryWrapper()
+                .where(FILE_COLLECTION_SUBMISSION.COLLECTION_ID.eq(collectionId));
+        int submissionCount = (int) submissionMapper.selectCountByQuery(submissionQuery);
+
+        // 只清理已经结束的传输任务元数据。进行中的任务交给定时清理，避免删除时
+        // 与分片上传/合并线程竞争；无论哪种状态，都不会触碰 FileInfo 或对象存储。
+        QueryWrapper terminalTaskQuery = new QueryWrapper()
+                .where(FILE_TRANSFER_TASK.COLLECTION_ID.eq(collectionId))
+                .and(FILE_TRANSFER_TASK.WORKSPACE_ID.eq(collection.getWorkspaceId()))
+                .and(FILE_TRANSFER_TASK.STATUS.in(
+                        TransferTaskStatus.completed,
+                        TransferTaskStatus.failed,
+                        TransferTaskStatus.canceled));
+        List<FileTransferTask> terminalTasks = transferTaskMapper.selectListByQuery(terminalTaskQuery);
+        if (!terminalTasks.isEmpty()) {
+            transferTaskMapper.deleteByQuery(terminalTaskQuery);
+            transferTaskCacheManager.cleanTasks(terminalTasks.stream()
+                    .map(FileTransferTask::getTaskId)
+                    .filter(Objects::nonNull)
+                    .toList());
+        }
+
+        submissionMapper.deleteByQuery(submissionQuery);
+        this.removeById(collection.getId());
+
+        return new FileCollectionDeletionResult(
+                collectionVO,
+                submissionCount,
+                terminalTasks.size());
     }
 
     @Override

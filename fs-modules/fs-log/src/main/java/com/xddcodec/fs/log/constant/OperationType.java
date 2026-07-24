@@ -23,6 +23,7 @@ public final class OperationType {
     public static final String CANCEL_SHARE = "CANCEL_SHARE";
     public static final String CREATE_COLLECTION = "CREATE_COLLECTION";
     public static final String UPDATE_COLLECTION = "UPDATE_COLLECTION";
+    public static final String DELETE_COLLECTION = "DELETE_COLLECTION";
     public static final String COLLECTION_UPLOAD = "COLLECTION_UPLOAD";
     public static final String CREATE_WORKSPACE = "CREATE_WORKSPACE";
     public static final String UPDATE_WORKSPACE = "UPDATE_WORKSPACE";

@@ -2,6 +2,9 @@
 --
 -- Host: localhost    Database: free_fs_clean_export
 -- ------------------------------------------------------
+-- Clean initialization baseline: runtime file, transfer, share, login, and
+-- operation-log records are intentionally omitted. Required permissions,
+-- roles, and the default administrator workspace seed remain included.
 -- Server version	8.0.42
 
 /*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
@@ -111,7 +114,7 @@ CREATE TABLE `file_info` (
   `parent_id` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT '父节点ID',
   `workspace_id` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT '所属工作空间ID',
   `user_id` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT '用户id',
-  `content_md5` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'ç”¨äºŽç§’ä¼ å’Œæ–‡ä»¶æ ¡éªŒ',
+  `content_md5` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT '用于秒传和文件校验',
   `storage_platform_setting_id` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT '存储平台标识符',
   `upload_time` datetime NOT NULL COMMENT '上传时间',
   `update_time` datetime DEFAULT NULL COMMENT '修改时间',
@@ -405,26 +408,26 @@ DROP TABLE IF EXISTS `sys_operation_log`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `sys_operation_log` (
-  `id` bigint NOT NULL AUTO_INCREMENT COMMENT 'ä¸»é”®',
-  `operator_id` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'æ“ä½œäººID',
-  `operator_name` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'æ“ä½œäººåç§°',
-  `workspace_id` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'å·¥ä½œç©ºé—´ID',
-  `operation_type` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'æ“ä½œç±»åž‹',
-  `operation_name` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'æ“ä½œåç§°',
-  `target_type` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'ç›®æ ‡ç±»åž‹',
-  `target_id` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'ç›®æ ‡ID',
-  `target_name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'ç›®æ ‡åç§°',
-  `detail` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci COMMENT 'æ“ä½œè¯¦æƒ…',
-  `operation_ip` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'å®¢æˆ·ç«¯IP',
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `operator_id` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT '操作人ID',
+  `operator_name` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT '操作人名称',
+  `workspace_id` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT '工作空间ID',
+  `operation_type` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT '操作类型',
+  `operation_name` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT '操作名称',
+  `target_type` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT '目标类型',
+  `target_id` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT '目标ID',
+  `target_name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT '目标名称',
+  `detail` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci COMMENT '操作详情',
+  `operation_ip` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT '客户端IP',
   `user_agent` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'User-Agent',
-  `status` tinyint NOT NULL DEFAULT '0' COMMENT '0æˆåŠŸ 1å¤±è´¥',
-  `error_message` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'å¤±è´¥åŽŸå› ',
-  `operation_time` datetime NOT NULL COMMENT 'æ“ä½œæ—¶é—´',
+  `status` tinyint NOT NULL DEFAULT '0' COMMENT '0成功 1失败',
+  `error_message` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT '失败原因',
+  `operation_time` datetime NOT NULL COMMENT '操作时间',
   PRIMARY KEY (`id`),
   KEY `idx_operation_workspace_time` (`workspace_id`,`operation_time`),
   KEY `idx_operation_operator_time` (`operator_id`,`operation_time`),
   KEY `idx_operation_type_time` (`operation_type`,`operation_time`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='å·¥ä½œç©ºé—´æ“ä½œæ—¥å¿—';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='工作空间操作日志';
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --

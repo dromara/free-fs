@@ -358,7 +358,7 @@ public class FileCollectionUploadServiceImpl implements FileCollectionUploadServ
                 fileInfo.getId(),
                 fileInfo.getDisplayName(),
                 "收集名称: " + authorized.context().getCollection().getCollectionName()
-                        + ", 文件大小: " + fileInfo.getSize());
+                        + ", 文件大小: " + FileUtils.formatFileSize(fileInfo.getSize()));
         cacheManager.cleanTask(task.getTaskId());
     }
 

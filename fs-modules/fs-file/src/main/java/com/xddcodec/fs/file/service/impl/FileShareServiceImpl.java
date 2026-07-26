@@ -370,6 +370,15 @@ public class FileShareServiceImpl extends ServiceImpl<FileShareMapper, FileShare
     }
 
     @Override
+    public void cancelFolderDownloadTask(String shareId, String taskId) {
+        FileShare fileShare = getValidShare(shareId);
+        FolderDownloadTaskVO task = fileTransferTaskService.getFolderDownloadTask(taskId);
+        List<String> shareFileIds = fileShareItemService.getShareFileIds(shareId);
+        getShareAccessibleFile(fileShare, shareFileIds, task.getFolderId());
+        fileTransferTaskService.cancelFolderDownloadTask(taskId);
+    }
+
+    @Override
     public FileDownloadVO downloadFolderTaskFile(String shareId, String taskId) {
         FileShare fileShare = getValidShare(shareId);
         FolderDownloadTaskVO task = fileTransferTaskService.getFolderDownloadTask(taskId);

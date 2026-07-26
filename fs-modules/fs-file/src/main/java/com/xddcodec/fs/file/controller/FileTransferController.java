@@ -255,6 +255,13 @@ public class FileTransferController {
         return Result.ok(result);
     }
 
+    @DeleteMapping("/folder-download/tasks/{taskId}")
+    @Operation(summary = "取消文件夹下载打包任务", description = "取消正在进行的文件夹打包并清理临时文件")
+    public Result<Void> cancelFolderDownloadTask(@PathVariable String taskId) {
+        fileTransferTaskService.cancelFolderDownloadTask(taskId);
+        return Result.ok();
+    }
+
     @GetMapping("/folder-download/tasks/{taskId}/file")
     @Operation(summary = "下载文件夹压缩包", description = "下载已打包完成的文件夹 zip")
     public ResponseEntity<Resource> downloadFolderTaskFile(@PathVariable String taskId) {

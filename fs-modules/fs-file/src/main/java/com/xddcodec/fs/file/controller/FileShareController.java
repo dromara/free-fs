@@ -166,6 +166,14 @@ public class FileShareController {
         return Result.ok(fileShareService.getFolderDownloadTask(shareId, taskId));
     }
 
+    @DeleteMapping("/{shareId}/folder-download/tasks/{taskId}")
+    @Operation(summary = "取消分享文件夹下载打包任务", description = "取消分享文件夹打包并清理临时文件")
+    public Result<Void> cancelFolderDownloadTask(@PathVariable String shareId,
+                                                  @PathVariable String taskId) {
+        fileShareService.cancelFolderDownloadTask(shareId, taskId);
+        return Result.ok();
+    }
+
     @GetMapping("/{shareId}/folder-download/tasks/{taskId}/file")
     @Operation(summary = "下载分享文件夹压缩包", description = "下载已打包完成的分享文件夹 zip")
     public ResponseEntity<Resource> downloadFolderTaskFile(@PathVariable String shareId,

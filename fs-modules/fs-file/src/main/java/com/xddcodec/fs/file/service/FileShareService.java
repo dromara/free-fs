@@ -100,6 +100,11 @@ public interface FileShareService extends IService<FileShare> {
     FolderDownloadTaskVO getFolderDownloadTask(String shareId, String taskId);
 
     /**
+     * 取消分享文件夹下载打包任务
+     */
+    void cancelFolderDownloadTask(String shareId, String taskId);
+
+    /**
      * 下载分享文件夹压缩包
      */
     FileDownloadVO downloadFolderTaskFile(String shareId, String taskId);

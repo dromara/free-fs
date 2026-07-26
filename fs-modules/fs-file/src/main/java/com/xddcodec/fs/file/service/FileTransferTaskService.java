@@ -117,6 +117,13 @@ public interface FileTransferTaskService extends IService<FileTransferTask> {
     FolderDownloadTaskVO getFolderDownloadTask(String taskId);
 
     /**
+     * 取消文件夹下载打包任务
+     *
+     * @param taskId 任务ID
+     */
+    void cancelFolderDownloadTask(String taskId);
+
+    /**
      * 下载已完成的文件夹压缩包
      *
      * @param taskId 任务ID

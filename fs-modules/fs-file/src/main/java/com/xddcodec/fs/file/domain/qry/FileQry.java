@@ -24,6 +24,6 @@ public class FileQry extends PageQuery {
     @Schema(description = "最近使用", example = "true")
     private Boolean isRecents;
 
-    @Schema(description = "是否目录", example = "1")
-    private Integer isDir;
+    @Schema(description = "是否目录", example = "true")
+    private Boolean isDir;
 }

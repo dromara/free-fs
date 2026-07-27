@@ -44,7 +44,7 @@ public class FileDetailVO implements Serializable {
     /**
      * 是否文件夹
      */
-    private Integer isDir;
+    private Boolean isDir;
 
     /**
      * 缩略图URL

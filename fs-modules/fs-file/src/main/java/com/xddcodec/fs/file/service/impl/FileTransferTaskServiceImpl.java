@@ -26,7 +26,6 @@ import com.xddcodec.fs.file.service.FileInfoService;
 import com.xddcodec.fs.file.service.FileObjectReferenceService;
 import com.xddcodec.fs.file.service.FileTransferTaskService;
 import com.xddcodec.fs.file.enums.TransferTaskStatus;
-import com.xddcodec.fs.framework.common.constant.CommonConstant;
 import com.xddcodec.fs.framework.common.context.WorkspaceContext;
 import com.xddcodec.fs.framework.common.exception.BusinessException;
 import com.xddcodec.fs.framework.common.exception.StorageOperationException;
@@ -272,7 +271,7 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
                     workspaceId,
                     cmd.getParentId(),
                     cmd.getFileName(),
-                    CommonConstant.N,
+                    false,
                     null,
                     storagePlatformSettingId
             );
@@ -412,7 +411,7 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
                     task.getWorkspaceId(),
                     task.getParentId(),
                     task.getFileName(),
-                    CommonConstant.N,
+                    false,
                     null,
                     storagePlatformSettingId
             );
@@ -424,7 +423,7 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
             newFileInfo.setSuffix(task.getSuffix());
             newFileInfo.setSize(task.getFileSize());
             newFileInfo.setMimeType(task.getMimeType());
-            newFileInfo.setIsDir(CommonConstant.N);
+            newFileInfo.setIsDir(false);
             newFileInfo.setParentId(task.getParentId());
             newFileInfo.setWorkspaceId(task.getWorkspaceId());
             newFileInfo.setUserId(task.getUserId());
@@ -432,7 +431,7 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
             newFileInfo.setStoragePlatformSettingId(task.getStoragePlatformSettingId());
             newFileInfo.setUploadTime(now);
             newFileInfo.setUpdateTime(now);
-            newFileInfo.setIsDeleted(CommonConstant.N);
+            newFileInfo.setIsDeleted(false);
 
             fileInfoService.save(newFileInfo);
 

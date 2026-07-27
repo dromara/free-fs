@@ -55,7 +55,7 @@ public class FileVO implements Serializable {
     /**
      * 是否目录
      */
-    private Integer isDir;
+    private Boolean isDir;
 
     /**
      * 父目录ID

@@ -6,7 +6,6 @@ import com.xddcodec.fs.file.domain.FileInfo;
 import com.xddcodec.fs.file.domain.FileUserFavorites;
 import com.xddcodec.fs.file.mapper.FileUserFavoritesMapper;
 import com.xddcodec.fs.file.service.FileUserFavoritesService;
-import com.xddcodec.fs.framework.common.constant.CommonConstant;
 import com.xddcodec.fs.framework.common.context.WorkspaceContext;
 import com.xddcodec.fs.framework.common.exception.BusinessException;
 import com.xddcodec.fs.framework.common.utils.I18nUtils;
@@ -53,7 +52,7 @@ public class FileUserFavoritesServiceImpl extends ServiceImpl<FileUserFavoritesM
                 QueryWrapper.create()
                         .where(FILE_INFO.ID.in(distinctFileIds))
                         .and(FILE_INFO.WORKSPACE_ID.eq(workspaceId))
-                        .and(FILE_INFO.IS_DELETED.eq(CommonConstant.N))
+                        .and(FILE_INFO.IS_DELETED.eq(false))
         );
         if (fileInfos.isEmpty()) {
             throw new BusinessException(I18nUtils.getMessage("file.favorites.not.found"));
@@ -158,7 +157,7 @@ public class FileUserFavoritesServiceImpl extends ServiceImpl<FileUserFavoritesM
                 .where(FILE_USER_FAVORITES.USER_ID.eq(userId))
                 .and(FILE_USER_FAVORITES.WORKSPACE_ID.eq(workspaceId))
                 .and(FILE_INFO.STORAGE_PLATFORM_SETTING_ID.eq(storagePlatformSettingId))
-                .and(FILE_INFO.IS_DELETED.eq(CommonConstant.N))
+                .and(FILE_INFO.IS_DELETED.eq(false))
         );
     }
 }

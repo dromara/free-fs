@@ -18,7 +18,6 @@ import com.xddcodec.fs.file.domain.vo.FileDetailVO;
 import com.xddcodec.fs.file.domain.vo.FileVO;
 import com.xddcodec.fs.file.mapper.FileInfoMapper;
 import com.xddcodec.fs.file.service.FileInfoService;
-import com.xddcodec.fs.framework.common.constant.CommonConstant;
 import com.xddcodec.fs.framework.common.domain.PageResult;
 import com.xddcodec.fs.framework.common.enums.FileTypeEnum;
 import com.xddcodec.fs.framework.common.context.WorkspaceContext;
@@ -85,7 +84,7 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
         if (fileInfo.getIsDir()) {
             throw new StorageOperationException(I18nUtils.getMessage("file.cannot.download.dir", new Object[]{fileId}));
         }
-        if (CommonConstant.Y.equals(fileInfo.getIsDeleted())) {
+        if (fileInfo.getIsDeleted()) {
             throw new StorageOperationException(I18nUtils.getMessage("file.deleted", new Object[]{fileId}));
         }
 
@@ -106,7 +105,7 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
         if (fileInfo.getIsDir()) {
             throw new StorageOperationException(I18nUtils.getMessage("file.dir.no.url", new Object[]{fileId}));
         }
-        if (CommonConstant.Y.equals(fileInfo.getIsDeleted())) {
+        if (fileInfo.getIsDeleted()) {
             throw new StorageOperationException(I18nUtils.getMessage("file.deleted", new Object[]{fileId}));
         }
         IStorageOperationService storageService = storageServiceFacade.getStorageService(fileInfo.getStoragePlatformSettingId());
@@ -136,7 +135,7 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
         LocalDateTime now = LocalDateTime.now();
 
         for (FileInfo fileInfo : fileInfoList) {
-            if (!CommonConstant.Y.equals(fileInfo.getIsDeleted())) {
+            if (!fileInfo.getIsDeleted()) {
                 toDeleteList.add(fileInfo);
 
                 // 如果是文件夹，递归获取所有子文件和子文件夹
@@ -153,7 +152,7 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
 
         // 批量标记为删除
         toDeleteList.forEach(fileInfo -> {
-            fileInfo.setIsDeleted(CommonConstant.Y);
+            fileInfo.setIsDeleted(true);
             fileInfo.setDeletedTime(now);
         });
 
@@ -177,7 +176,7 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
                 .and(FILE_INFO.WORKSPACE_ID.eq(workspaceId));
 
         if (!includeDeleted) {
-            query.and(FILE_INFO.IS_DELETED.eq(CommonConstant.N));
+            query.and(FILE_INFO.IS_DELETED.eq(false));
         }
 
         List<FileInfo> directChildren = list(query);
@@ -213,7 +212,7 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
                 workspaceId,
                 cmd.getParentId(),
                 baseName,
-                CommonConstant.Y,
+                true,
                 null,
                 platformConfigId
         );
@@ -221,7 +220,7 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
         dirInfo.setId(folderId);
         dirInfo.setOriginalName(finalName);
         dirInfo.setDisplayName(finalName);
-        dirInfo.setIsDir(CommonConstant.Y);
+        dirInfo.setIsDir(true);
         dirInfo.setParentId(cmd.getParentId());
         dirInfo.setWorkspaceId(workspaceId);
         dirInfo.setUserId(userId);
@@ -229,7 +228,7 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
         LocalDateTime now = LocalDateTime.now();
         dirInfo.setUploadTime(now);
         dirInfo.setUpdateTime(now);
-        dirInfo.setIsDeleted(CommonConstant.N);
+        dirInfo.setIsDeleted(false);
         save(dirInfo);
         return dirInfo;
     }
@@ -471,12 +470,12 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
      */
     @Override
     public String generateUniqueName(String workspaceId, String parentId,
-                                     String desiredName, Integer isDir,
+                                     String desiredName, Boolean isDir,
                                      String excludeFileId, String storagePlatformSettingId) {
 
         String nameWithoutExt = desiredName;
         String extension = "";
-        if (!CommonConstant.Y.equals(isDir) && desiredName.contains(".")) {
+        if (!isDir && desiredName.contains(".")) {
             int lastDotIndex = desiredName.lastIndexOf(".");
             nameWithoutExt = desiredName.substring(0, lastDotIndex);
             extension = desiredName.substring(lastDotIndex);
@@ -508,13 +507,13 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
      * 构建查询同级目录下同类型文件的条件
      */
     private QueryWrapper buildSameLevelQuery(String workspaceId, String parentId,
-                                             String baseName, Integer isDir,
+                                             String baseName, Boolean isDir,
                                              String excludeFileId, String storagePlatformSettingId) {
         QueryWrapper query = new QueryWrapper();
 
         query.where(FILE_INFO.WORKSPACE_ID.eq(workspaceId))
                 .and(FILE_INFO.IS_DIR.eq(isDir))
-                .and(FILE_INFO.IS_DELETED.eq(CommonConstant.N));
+                .and(FILE_INFO.IS_DELETED.eq(false));
 
         if (StrUtil.isBlank(parentId)) {
             query.and(FILE_INFO.PARENT_ID.isNull());
@@ -547,13 +546,13 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
      */
     private Set<Integer> extractUsedSuffixes(List<FileInfo> existingFiles,
                                              String nameWithoutExt,
-                                             Integer isDir) {
+                                             Boolean isDir) {
         return existingFiles.stream()
                 .map(f -> {
                     String displayName = f.getDisplayName();
 
                     // 移除扩展名（如果是文件）
-                    if (!CommonConstant.Y.equals(isDir) && displayName.contains(".")) {
+                    if (!isDir && displayName.contains(".")) {
                         int lastDotIndex = displayName.lastIndexOf(".");
                         displayName = displayName.substring(0, lastDotIndex);
                     }
@@ -587,8 +586,8 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
      * @return 完整的文件名
      */
     private String buildNameWithSuffix(String nameWithoutExt, int suffixNum,
-                                       String extension, Integer isDir) {
-        if (CommonConstant.Y.equals(isDir)) {
+                                       String extension, Boolean isDir) {
+        if (isDir) {
             // 文件夹：baseName(1)
             return nameWithoutExt + "(" + suffixNum + ")";
         } else {
@@ -644,7 +643,7 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
                 .on(FILE_INFO.ID.eq(FILE_USER_FAVORITES.FILE_ID)
                         .and(FILE_USER_FAVORITES.USER_ID.eq(userId)))
                 .where(FILE_INFO.WORKSPACE_ID.eq(workspaceId))
-                .and(FILE_INFO.IS_DELETED.eq(CommonConstant.N));
+                .and(FILE_INFO.IS_DELETED.eq(false));
         // 存储平台过滤
         if (StringUtils.isEmpty(storagePlatformSettingId)) {
             wrapper.and(FILE_INFO.STORAGE_PLATFORM_SETTING_ID.isNull());
@@ -653,7 +652,7 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
         }
         // 最近使用视图 (Recents)
         if (Boolean.TRUE.equals(qry.getIsRecents())) {
-            wrapper.and(FILE_INFO.IS_DIR.eq(CommonConstant.N))
+            wrapper.and(FILE_INFO.IS_DIR.eq(false))
                     .orderBy(FILE_INFO.LAST_ACCESS_TIME.desc());
             // 最近使用通常不需要分页，只需要前 N 条，或者也可以直接分页查询第一页
             pageParam.setPageSize(20);
@@ -664,8 +663,8 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
             }
 
             // 目录/文件视图过滤
-            if (CommonConstant.Y.equals(qry.getIsDir())) {
-                wrapper.and(FILE_INFO.IS_DIR.eq(CommonConstant.Y));
+            if (Boolean.TRUE.equals(qry.getIsDir())) {
+                wrapper.and(FILE_INFO.IS_DIR.eq(true));
             }
 
             // 父目录逻辑：判断是否是特殊筛选视图
@@ -749,8 +748,8 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
         List<FileInfo> fileInfoList = this.list(new QueryWrapper()
                 .where(FILE_INFO.WORKSPACE_ID.eq(workspaceId)
                         .and(FILE_INFO.STORAGE_PLATFORM_SETTING_ID.eq(storagePlatformSettingId))
-                        .and(FILE_INFO.IS_DELETED.eq(CommonConstant.N))
-                        .and(FILE_INFO.IS_DIR.eq(CommonConstant.N))
+                        .and(FILE_INFO.IS_DELETED.eq(false))
+                        .and(FILE_INFO.IS_DIR.eq(false))
                 ));
 
         // 统计总大小
@@ -765,7 +764,7 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
     public FileDetailVO getFileDetails(String fileId) {
         FileInfo fileInfo = getAuthorizedFile(fileId);
         FileDetailVO vo = converter.convert(fileInfo, FileDetailVO.class);
-        if (CommonConstant.Y.equals(vo.getIsDir())) {
+        if (vo.getIsDir()) {
             Map<String, Long> stats = new HashMap<>();
             stats.put("size", 0L);
             stats.getOrDefault("fileCount", 0L);
@@ -795,14 +794,14 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
                 .where(FILE_INFO.PARENT_ID.eq(parentId))
                 .and(FILE_INFO.WORKSPACE_ID.eq(workspaceId))
                 .and(FILE_INFO.STORAGE_PLATFORM_SETTING_ID.eq(storagePlatformSettingId))
-                .and(FILE_INFO.IS_DELETED.eq(CommonConstant.N)));
+                .and(FILE_INFO.IS_DELETED.eq(false)));
 
         if (CollUtil.isEmpty(children)) {
             return;
         }
 
         for (FileInfo child : children) {
-            if (CommonConstant.Y.equals(child.getIsDir())) {
+            if (child.getIsDir()) {
                 // 统计文件夹个数并向下递归
                 stats.put("folderCount", stats.get("folderCount") + 1);
                 recursiveAccumulate(child.getId(), stats);
@@ -822,8 +821,8 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
         QueryWrapper wrapper = new QueryWrapper();
         wrapper.where(FILE_INFO.WORKSPACE_ID.eq(workspaceId)
                 .and(FILE_INFO.STORAGE_PLATFORM_SETTING_ID.eq(storagePlatformSettingId))
-                .and(FILE_INFO.IS_DELETED.eq(CommonConstant.N))
-                .and(FILE_INFO.IS_DIR.eq(CommonConstant.Y))
+                .and(FILE_INFO.IS_DELETED.eq(false))
+                .and(FILE_INFO.IS_DIR.eq(true))
         );
 
         if (StrUtil.isNotBlank(parentId)) {
@@ -878,7 +877,7 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
             // OTHER 分类：匹配 OTHER 分类的已知后缀 + 所有未知后缀
             List<String> allOtherKnownSuffixes = FileTypeEnum.getAllKnownSuffixesExcluding(FileTypeEnum.FileCategory.OTHER);
 
-            wrapper.and(FILE_INFO.IS_DIR.eq(CommonConstant.N))
+            wrapper.and(FILE_INFO.IS_DIR.eq(false))
                     .and(
                             FILE_INFO.SUFFIX.in(categorySuffixes) // zip、rar 等
                                     .or(FILE_INFO.SUFFIX.notIn(allOtherKnownSuffixes)) // 真正的未知类型
@@ -887,7 +886,7 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
         } else {
             // 常规分类：直接匹配后缀
             if (!categorySuffixes.isEmpty()) {
-                wrapper.and(FILE_INFO.IS_DIR.eq(CommonConstant.N))
+                wrapper.and(FILE_INFO.IS_DIR.eq(false))
                         .and(FILE_INFO.SUFFIX.in(categorySuffixes));
             }
         }
@@ -900,7 +899,7 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
         if (fileType.isOther()) {
             // 其他类型：排除所有已知后缀
             List<String> knownSuffixes = FileTypeEnum.getAllKnownSuffixes();
-            wrapper.and(FILE_INFO.IS_DIR.eq(CommonConstant.N))
+            wrapper.and(FILE_INFO.IS_DIR.eq(false))
                     .and(
                             FILE_INFO.SUFFIX.notIn(knownSuffixes)
                                     .or(FILE_INFO.SUFFIX.isNull().or(FILE_INFO.SUFFIX.eq("")))
@@ -909,7 +908,7 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
             // 具体类型：直接匹配后缀
             List<String> suffixes = fileType.getSuffixes();
             if (suffixes != null && !suffixes.isEmpty()) {
-                wrapper.and(FILE_INFO.IS_DIR.eq(CommonConstant.N))
+                wrapper.and(FILE_INFO.IS_DIR.eq(false))
                         .and(FILE_INFO.SUFFIX.in(suffixes));
             }
         }

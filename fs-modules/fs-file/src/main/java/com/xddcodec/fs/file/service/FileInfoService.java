@@ -75,7 +75,7 @@ public interface FileInfoService extends IService<FileInfo> {
      * @return 唯一的文件名
      */
     String generateUniqueName(String workspaceId, String parentId,
-                              String desiredName, Integer isDir,
+                              String desiredName, Boolean isDir,
                               String excludeFileId, String storagePlatformSettingId);
 
     /**

@@ -1,12 +1,9 @@
 package com.xddcodec.fs.storage.domain;
 
-import com.mybatisflex.annotation.Column;
 import com.mybatisflex.annotation.Id;
 import com.mybatisflex.annotation.KeyType;
 import com.mybatisflex.annotation.Table;
-import com.xddcodec.fs.framework.orm.handler.JsonStringTypeHandler;
 import lombok.Data;
-import org.apache.ibatis.type.JdbcType;
 
 import java.io.Serial;
 import java.io.Serializable;
@@ -43,7 +40,6 @@ public class StoragePlatform implements Serializable {
     /**
      * 存储平台配置描述schema
      */
-    @Column(jdbcType = JdbcType.OTHER, typeHandler = JsonStringTypeHandler.class)
     private String configScheme;
 
     /**

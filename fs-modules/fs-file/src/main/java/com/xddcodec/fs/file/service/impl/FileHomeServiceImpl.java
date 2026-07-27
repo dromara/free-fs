@@ -10,7 +10,6 @@ import com.xddcodec.fs.file.domain.vo.FileHomeVO;
 import com.xddcodec.fs.file.domain.vo.FileVO;
 import com.xddcodec.fs.file.service.FileHomeService;
 import com.xddcodec.fs.file.service.FileInfoService;
-import com.xddcodec.fs.framework.common.constant.CommonConstant;
 import com.xddcodec.fs.framework.common.context.WorkspaceContext;
 import com.xddcodec.fs.framework.common.domain.PageResult;
 import com.xddcodec.fs.storage.plugin.core.context.StoragePlatformContextHolder;
@@ -66,8 +65,8 @@ public class FileHomeServiceImpl implements FileHomeService {
                 .select(FILE_INFO.UPLOAD_TIME, FILE_INFO.SIZE)
                 .where(FILE_INFO.WORKSPACE_ID.eq(workspaceId))
                 .and(FILE_INFO.STORAGE_PLATFORM_SETTING_ID.eq(storageId))
-                .and(FILE_INFO.IS_DIR.eq(CommonConstant.N))
-                .and(FILE_INFO.IS_DELETED.eq(CommonConstant.N))
+                .and(FILE_INFO.IS_DIR.eq(false))
+                .and(FILE_INFO.IS_DELETED.eq(false))
                 .and(FILE_INFO.UPLOAD_TIME.between(startTime, endTime));
 
         List<FileInfo> files = fileInfoService.list(queryWrapper);

@@ -59,9 +59,9 @@ public class FileInfo implements Serializable {
     private String mimeType;
 
     /**
-     * 是否目录（0-否 1-是，对应 smallint 列）
+     * 是否目录
      */
-    private Integer isDir;
+    private Boolean isDir;
 
     /**
      * 父目录ID
@@ -104,9 +104,9 @@ public class FileInfo implements Serializable {
     private LocalDateTime lastAccessTime;
 
     /**
-     * 软删除标记，回收站标识 0：未删除 1：已删除（对应 smallint 列）
+     * 软删除标记，回收站标识0：未删除 1：已删除
      */
-    private Integer isDeleted;
+    private Boolean isDeleted;
 
     /**
      * 删除时间

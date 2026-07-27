@@ -3,13 +3,11 @@ package com.xddcodec.fs.storage.domain;
 import com.mybatisflex.annotation.Column;
 import com.mybatisflex.core.keygen.KeyGenerators;
 import com.xddcodec.fs.framework.orm.entity.BaseEntity;
-import com.xddcodec.fs.framework.orm.handler.JsonStringTypeHandler;
 import com.mybatisflex.annotation.Id;
 import com.mybatisflex.annotation.KeyType;
 import com.mybatisflex.annotation.Table;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
-import org.apache.ibatis.type.JdbcType;
 
 /**
  * 存储平台配置表
@@ -36,7 +34,6 @@ public class StorageSetting extends BaseEntity {
     /**
      * 配置数据
      */
-    @Column(jdbcType = JdbcType.OTHER, typeHandler = JsonStringTypeHandler.class)
     private String configData;
 
     /**

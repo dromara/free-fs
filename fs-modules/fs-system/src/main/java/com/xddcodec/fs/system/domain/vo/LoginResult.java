@@ -1,5 +1,6 @@
 package com.xddcodec.fs.system.domain.vo;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.xddcodec.fs.system.domain.SysUser;
 import io.github.linpeilie.annotations.AutoMapper;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -29,5 +30,6 @@ public class LoginResult implements Serializable {
     private String username;
 
     @Schema(description = "访问凭据")
+    @JsonIgnore
     private String accessToken;
 }

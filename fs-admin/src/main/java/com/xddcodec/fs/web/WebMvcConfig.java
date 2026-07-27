@@ -49,9 +49,12 @@ public class WebMvcConfig implements WebMvcConfigurer {
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
+        String[] previewTokenPaths = {"/preview/token/**", "/archive/preview/token/**"};
+
         // 工作空间上下文拦截器（在登录校验之后）
         registry.addInterceptor(workspaceInterceptor)
                 .addPathPatterns("/apis/**")
+                .addPathPatterns(previewTokenPaths)
                 .order(1);
 
         // Sa-Token 登录校验拦截器
@@ -60,11 +63,19 @@ public class WebMvcConfig implements WebMvcConfigurer {
                 .excludePathPatterns(securityProperties.getExcludes())
                 .order(2);
 
+        registry.addInterceptor(new SaInterceptor(handle -> StpUtil.checkLogin()))
+                .addPathPatterns(previewTokenPaths)
+                .order(2);
+
 
         //注册存储平台切换拦截器
         registry.addInterceptor(storagePlatformInterceptor)
                 .addPathPatterns(securityProperties.getPathPattern())
                 .excludePathPatterns(securityProperties.getExcludes())
+                .order(3);
+
+        registry.addInterceptor(storagePlatformInterceptor)
+                .addPathPatterns(previewTokenPaths)
                 .order(3);
 
         //注册文件预览防盗链拦截器

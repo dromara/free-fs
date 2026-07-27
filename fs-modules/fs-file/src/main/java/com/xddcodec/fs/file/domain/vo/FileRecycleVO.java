@@ -40,7 +40,7 @@ public class FileRecycleVO implements Serializable {
     /**
      * 是否目录
      */
-    private Integer isDir;
+    private Boolean isDir;
 
     /**
      * 上传时间

@@ -9,6 +9,8 @@ import com.xddcodec.fs.file.service.FileShareAccessRecordService;
 import com.xddcodec.fs.file.service.FileShareService;
 import com.xddcodec.fs.framework.common.domain.PageResult;
 import com.xddcodec.fs.framework.common.domain.Result;
+import com.xddcodec.fs.log.constant.OperationType;
+import com.xddcodec.fs.log.service.SysOperationLogService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.extern.slf4j.Slf4j;
@@ -36,6 +38,9 @@ public class FileShareController {
     @Autowired
     private FileShareAccessRecordService fileShareAccessRecordService;
 
+    @Autowired
+    private SysOperationLogService operationLogService;
+
     @GetMapping("/pages")
     @Operation(summary = "获取我的分享", description = "分页获取我的分享列表")
     public PageResult<FileShareVO> getPages(FileShareQry qry) {
@@ -53,6 +58,7 @@ public class FileShareController {
     @GetMapping("/{shareId}/access/records")
     @Operation(summary = "获取分享访问记录列表", description = "获取分享访问记录列表")
     public Result<List<FileShareAccessRecordVO>> getListByShareId(@PathVariable String shareId) {
+        fileShareService.getDetail(shareId);
         List<FileShareAccessRecordVO> result = fileShareAccessRecordService.getListByShareId(shareId);
         return Result.ok(result);
     }
@@ -62,6 +68,14 @@ public class FileShareController {
     @SaCheckPermission("file:share")
     public Result<FileShareVO> createDirectory(@RequestBody @Validated CreateShareCmd cmd) {
         FileShareVO fileShareVO = fileShareService.createShare(cmd);
+        operationLogService.recordSuccess(
+                OperationType.CREATE_SHARE,
+                "创建分享",
+                "SHARE",
+                fileShareVO.getId(),
+                fileShareVO.getShareName(),
+                "分享文件数: " + cmd.getFileIds().size()
+        );
         return Result.ok(fileShareVO);
     }
 
@@ -70,6 +84,14 @@ public class FileShareController {
     @SaCheckPermission("file:share")
     public Result<FileShareVO> cancelShares(@RequestBody List<String> ids) {
         fileShareService.cancelShares(ids);
+        operationLogService.recordSuccess(
+                OperationType.CANCEL_SHARE,
+                "取消分享",
+                ids.size() > 1 ? "MULTIPLE" : "SHARE",
+                String.join(",", ids),
+                null,
+                "共取消 " + ids.size() + " 个分享"
+        );
         return Result.ok();
     }
 
@@ -78,6 +100,14 @@ public class FileShareController {
     @SaCheckPermission("file:share")
     public Result<FileShareVO> cancelAllShares() {
         fileShareService.cancelAllShares();
+        operationLogService.recordSuccess(
+                OperationType.CANCEL_SHARE,
+                "清空分享",
+                "SHARE",
+                null,
+                "全部分享",
+                null
+        );
         return Result.ok();
     }
 
@@ -119,6 +149,47 @@ public class FileShareController {
                     .body(fileDownload.getResource());
         } catch (Exception e) {
             throw new RuntimeException("文件下载失败", e);
+        }
+    }
+
+    @PostMapping("/{shareId}/folder-download/tasks/{folderId}")
+    @Operation(summary = "创建分享文件夹下载任务", description = "异步打包分享内文件夹")
+    public Result<FolderDownloadTaskVO> createFolderDownloadTask(@PathVariable String shareId,
+                                                                  @PathVariable String folderId) {
+        return Result.ok(fileShareService.createFolderDownloadTask(shareId, folderId));
+    }
+
+    @GetMapping("/{shareId}/folder-download/tasks/{taskId}")
+    @Operation(summary = "查询分享文件夹下载任务", description = "查询分享文件夹打包进度")
+    public Result<FolderDownloadTaskVO> getFolderDownloadTask(@PathVariable String shareId,
+                                                               @PathVariable String taskId) {
+        return Result.ok(fileShareService.getFolderDownloadTask(shareId, taskId));
+    }
+
+    @DeleteMapping("/{shareId}/folder-download/tasks/{taskId}")
+    @Operation(summary = "取消分享文件夹下载打包任务", description = "取消分享文件夹打包并清理临时文件")
+    public Result<Void> cancelFolderDownloadTask(@PathVariable String shareId,
+                                                  @PathVariable String taskId) {
+        fileShareService.cancelFolderDownloadTask(shareId, taskId);
+        return Result.ok();
+    }
+
+    @GetMapping("/{shareId}/folder-download/tasks/{taskId}/file")
+    @Operation(summary = "下载分享文件夹压缩包", description = "下载已打包完成的分享文件夹 zip")
+    public ResponseEntity<Resource> downloadFolderTaskFile(@PathVariable String shareId,
+                                                            @PathVariable String taskId) {
+        try {
+            FileDownloadVO fileDownload = fileShareService.downloadFolderTaskFile(shareId, taskId);
+            HttpHeaders headers = new HttpHeaders();
+            headers.add(HttpHeaders.CONTENT_DISPOSITION,
+                    "attachment; filename=\"" + URLEncoder.encode(fileDownload.getFileName(), StandardCharsets.UTF_8) + "\"");
+            headers.add(HttpHeaders.CONTENT_TYPE, "application/zip");
+            return ResponseEntity.ok()
+                    .headers(headers)
+                    .contentLength(fileDownload.getFileSize())
+                    .body(fileDownload.getResource());
+        } catch (Exception e) {
+            throw new RuntimeException("分享文件夹下载失败", e);
         }
     }
 }

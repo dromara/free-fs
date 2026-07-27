@@ -14,6 +14,11 @@ public class RedisKey {
     public static final long VERIFY_CODE_EXPIRE_SECONDS = 5 * 60;
 
     /**
+     * 验证码发送间隔（60秒）
+     */
+    public static final long VERIFY_CODE_SEND_INTERVAL_SECONDS = 60;
+
+    /**
      * 缓存过期时间（24小时）
      */
     public static final long CACHE_EXPIRE_SECONDS = 24 * 60 * 60;
@@ -27,6 +32,8 @@ public class RedisKey {
      * 预览token过期 key
      */
     private static final String PREVIEW_TOKEN_KEY = "preview:token";
+
+    private static final String PREVIEW_WORKSPACE_KEY = "preview:workspace";
 
     /**
      * 预览token过期时间 默认5分钟
@@ -75,6 +82,17 @@ public class RedisKey {
     }
 
     /**
+     * 获取验证码发送限流 key
+     *
+     * @param scene 验证码使用场景
+     * @param email 邮箱
+     * @return fs:codeRate:场景:邮箱
+     */
+    public static String getVerifyCodeRateLimitKey(String scene, String email) {
+        return String.join(SEPARATOR, BASE_KEY, "codeRate", scene, email);
+    }
+
+    /**
      * 获取验证码key
      *
      * @param token 预览短链token
@@ -82,5 +100,9 @@ public class RedisKey {
      */
     public static String getPreviewTokenKey(String token) {
         return String.join(SEPARATOR, BASE_KEY, PREVIEW_TOKEN_KEY, token);
+    }
+
+    public static String getPreviewWorkspaceKey(String token) {
+        return String.join(SEPARATOR, BASE_KEY, PREVIEW_WORKSPACE_KEY, token);
     }
 }

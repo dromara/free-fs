@@ -11,6 +11,7 @@ import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
+import java.util.Locale;
 
 /**
  * 文件工具类
@@ -81,6 +82,30 @@ public class FileUtils {
      */
     public static String extName(String fileName) {
         return FileUtil.extName(fileName);
+    }
+
+    /**
+     * 将字节数格式化为便于阅读的文件大小。
+     *
+     * <p>使用 1024 进制，自动在 B、KB、MB、GB、TB 和 PB 之间转换，
+     * 与前端文件列表的显示规则保持一致。</p>
+     *
+     * @param bytes 字节数
+     * @return 格式化后的文件大小；空值或非正数返回 {@code 0 B}
+     */
+    public static String formatFileSize(Long bytes) {
+        if (bytes == null || bytes <= 0) {
+            return "0 B";
+        }
+
+        double value = bytes;
+        String[] units = {"B", "KB", "MB", "GB", "TB", "PB"};
+        int unitIndex = 0;
+        while (value >= 1024 && unitIndex < units.length - 1) {
+            value /= 1024;
+            unitIndex++;
+        }
+        return String.format(Locale.ROOT, "%.2f %s", value, units[unitIndex]);
     }
 
     /**

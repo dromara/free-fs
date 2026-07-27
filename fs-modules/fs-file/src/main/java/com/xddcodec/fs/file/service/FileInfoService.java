@@ -2,6 +2,7 @@ package com.xddcodec.fs.file.service;
 
 import com.xddcodec.fs.file.domain.FileInfo;
 import com.xddcodec.fs.file.domain.dto.CreateDirectoryCmd;
+import com.xddcodec.fs.file.domain.dto.CopyFileCmd;
 import com.xddcodec.fs.file.domain.dto.MoveFileCmd;
 import com.xddcodec.fs.file.domain.dto.RenameFileCmd;
 import com.xddcodec.fs.file.domain.qry.FileQry;
@@ -20,6 +21,11 @@ import java.util.List;
  * @Date: 2025/5/8 9:35
  */
 public interface FileInfoService extends IService<FileInfo> {
+
+    /**
+     * 获取当前工作空间内可访问的文件。
+     */
+    FileInfo getAuthorizedFile(String fileId);
 
     /**
      * 下载文件
@@ -69,7 +75,7 @@ public interface FileInfoService extends IService<FileInfo> {
      * @return 唯一的文件名
      */
     String generateUniqueName(String workspaceId, String parentId,
-                              String desiredName, Integer isDir,
+                              String desiredName, Boolean isDir,
                               String excludeFileId, String storagePlatformSettingId);
 
     /**
@@ -86,6 +92,12 @@ public interface FileInfoService extends IService<FileInfo> {
      * @param cmd 移动文件请求参数
      */
     void moveFile(MoveFileCmd cmd);
+
+    /**
+     * 复制文件或文件夹到指定目录。
+     * 复制只新增数据库引用，不重复上传物理对象。
+     */
+    List<FileInfo> copyFiles(CopyFileCmd cmd);
 
     /**
      * 获取目录层级

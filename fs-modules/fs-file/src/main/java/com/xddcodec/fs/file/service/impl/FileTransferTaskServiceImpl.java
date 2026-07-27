@@ -16,15 +16,16 @@ import com.xddcodec.fs.file.domain.qry.TransferFilesQry;
 import com.xddcodec.fs.file.domain.vo.CheckUploadResultVO;
 import com.xddcodec.fs.file.domain.vo.FileDownloadVO;
 import com.xddcodec.fs.file.domain.vo.FileTransferTaskVO;
+import com.xddcodec.fs.file.domain.vo.FolderDownloadTaskVO;
 import com.xddcodec.fs.file.domain.vo.InitDownloadResultVO;
 import com.xddcodec.fs.file.enums.TransferTaskType;
 import com.xddcodec.fs.file.handler.UploadTaskExceptionHandler;
 import com.xddcodec.fs.file.handler.DownloadTaskExceptionHandler;
 import com.xddcodec.fs.file.mapper.FileTransferTaskMapper;
 import com.xddcodec.fs.file.service.FileInfoService;
+import com.xddcodec.fs.file.service.FileObjectReferenceService;
 import com.xddcodec.fs.file.service.FileTransferTaskService;
 import com.xddcodec.fs.file.enums.TransferTaskStatus;
-import com.xddcodec.fs.framework.common.constant.CommonConstant;
 import com.xddcodec.fs.framework.common.context.WorkspaceContext;
 import com.xddcodec.fs.framework.common.exception.BusinessException;
 import com.xddcodec.fs.framework.common.exception.StorageOperationException;
@@ -33,28 +34,46 @@ import com.xddcodec.fs.framework.common.utils.FileUtils;
 import com.xddcodec.fs.framework.common.utils.I18nUtils;
 import com.xddcodec.fs.framework.common.utils.StringUtils;
 import com.xddcodec.fs.file.service.TransferSseService;
+import com.xddcodec.fs.log.constant.OperationType;
+import com.xddcodec.fs.log.service.SysOperationLogService;
 import com.xddcodec.fs.storage.facade.StorageServiceFacade;
 import com.xddcodec.fs.storage.plugin.core.IStorageOperationService;
 import com.xddcodec.fs.storage.plugin.core.context.StoragePlatformContextHolder;
+import com.xddcodec.fs.system.domain.SysUser;
 import com.xddcodec.fs.system.domain.SysUserTransferSetting;
+import com.xddcodec.fs.system.service.SysUserService;
 import com.xddcodec.fs.system.service.SysUserTransferSettingService;
 import io.github.linpeilie.Converter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.core.task.TaskExecutor;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.io.ByteArrayInputStream;
+import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.DirectoryStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 import static com.xddcodec.fs.file.domain.table.FileInfoTableDef.FILE_INFO;
 import static com.xddcodec.fs.file.domain.table.FileTransferTaskTableDef.FILE_TRANSFER_TASK;
@@ -71,6 +90,7 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
 
     private final Converter converter;
     private final FileInfoService fileInfoService;
+    private final FileObjectReferenceService objectReferenceService;
     private final TransferSseService transferSseService;
     private final TransferTaskCacheManager cacheManager;
     private final UploadTaskExceptionHandler exceptionHandler;
@@ -80,9 +100,21 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
     @Qualifier("fileMergeExecutor")
     private final TaskExecutor fileMergeExecutor;
     private final StorageServiceFacade storageServiceFacade;
+    private final SysUserService sysUserService;
     private final SysUserTransferSettingService userTransferSettingService;
+    private final SysOperationLogService operationLogService;
     @Value("${spring.application.name:free-fs}")
     private String applicationName;
+    @Value("${fs.folder-download.temp-dir:${java.io.tmpdir}/free-fs-folder-download}")
+    private String folderDownloadTempDir;
+    private static final long FOLDER_DOWNLOAD_TASK_TTL_MS = 2 * 60 * 60 * 1000L;
+    private static final long FOLDER_DOWNLOAD_CLEANUP_INTERVAL_MS = 2 * 60 * 60 * 1000L;
+    private static final long FOLDER_DOWNLOAD_CANCEL_WAIT_SECONDS = 5L;
+    private static final String FOLDER_DOWNLOAD_TASK_PREFIX = "free-fs-folder-task-";
+    private static final String FOLDER_DOWNLOAD_DIRECT_PREFIX = "free-fs-folder-";
+    private final Map<String, FolderDownloadTask> folderDownloadTasks = new ConcurrentHashMap<>();
+    private final Map<String, DeleteOnCloseInputStream> activeFolderDownloadStreams = new ConcurrentHashMap<>();
+    private final Set<Path> activeFolderDownloadPaths = ConcurrentHashMap.newKeySet();
 
     @Override
     public List<FileTransferTaskVO> getTransferFiles(TransferFilesQry qry) {
@@ -92,10 +124,11 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
         QueryWrapper queryWrapper = new QueryWrapper();
         queryWrapper.where(FILE_TRANSFER_TASK.USER_ID.eq(userId)
                 .and(FILE_TRANSFER_TASK.WORKSPACE_ID.eq(workspaceId))
-                .and(FILE_TRANSFER_TASK.STORAGE_PLATFORM_SETTING_ID.eq(storagePlatformSettingId)));
-//        if (qry.getStatusType() != null) {
-//
-//        }
+                // 公开文件收集上传由专用页面管理，不能混入普通传输列表。
+                .and(FILE_TRANSFER_TASK.COLLECTION_ID.isNull())
+                .and(FILE_TRANSFER_TASK.COLLECTION_SUBMISSION_ID.isNull()));
+        applyStorageScope(queryWrapper, storagePlatformSettingId);
+        applyStatusTypeFilter(queryWrapper, qry == null ? null : qry.getStatusType());
         queryWrapper.orderBy(FILE_TRANSFER_TASK.CREATED_AT.asc());
         List<FileTransferTask> tasks = this.list(queryWrapper);
         List<FileTransferTaskVO> voList = converter.convert(tasks, FileTransferTaskVO.class);
@@ -174,6 +207,50 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
     }
 
     /**
+     * 存储平台切换前创建的任务可能没有 storage_platform_setting_id，保留这些历史任务，
+     * 否则它们会在旧版本列表中可见、却无法被清空接口命中。
+     */
+    private void applyStorageScope(QueryWrapper queryWrapper, String storagePlatformSettingId) {
+        if (StringUtils.isEmpty(storagePlatformSettingId)) {
+            queryWrapper.and(FILE_TRANSFER_TASK.STORAGE_PLATFORM_SETTING_ID.isNull());
+            return;
+        }
+        queryWrapper.and(FILE_TRANSFER_TASK.STORAGE_PLATFORM_SETTING_ID.eq(storagePlatformSettingId)
+                .or(FILE_TRANSFER_TASK.STORAGE_PLATFORM_SETTING_ID.isNull()));
+    }
+
+    /**
+     * 按传输页面约定的状态类型过滤任务：1 上传中、2 下载中、3 已完成（含失败/取消）。
+     */
+    private void applyStatusTypeFilter(QueryWrapper queryWrapper, Integer statusType) {
+        if (statusType == null) {
+            return;
+        }
+
+        switch (statusType) {
+            case 1 -> queryWrapper.and(FILE_TRANSFER_TASK.TASK_TYPE.eq(TransferTaskType.upload)
+                    .and(FILE_TRANSFER_TASK.STATUS.in(
+                            TransferTaskStatus.initialized,
+                            TransferTaskStatus.checking,
+                            TransferTaskStatus.uploading,
+                            TransferTaskStatus.paused,
+                            TransferTaskStatus.merging)));
+            case 2 -> queryWrapper.and(FILE_TRANSFER_TASK.TASK_TYPE.eq(TransferTaskType.download)
+                    .and(FILE_TRANSFER_TASK.STATUS.in(
+                            TransferTaskStatus.initialized,
+                            TransferTaskStatus.checking,
+                            TransferTaskStatus.downloading,
+                            TransferTaskStatus.paused,
+                            TransferTaskStatus.merging)));
+            case 3 -> queryWrapper.and(FILE_TRANSFER_TASK.STATUS.in(
+                    TransferTaskStatus.completed,
+                    TransferTaskStatus.failed,
+                    TransferTaskStatus.canceled));
+            default -> log.warn("忽略未知的传输状态类型: statusType={}", statusType);
+        }
+    }
+
+    /**
      * 初始化上传
      *
      * @param cmd 初始化上传命令
@@ -194,7 +271,7 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
                     workspaceId,
                     cmd.getParentId(),
                     cmd.getFileName(),
-                    CommonConstant.N,
+                    false,
                     null,
                     storagePlatformSettingId
             );
@@ -239,7 +316,7 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
         // 获取任务
         FileTransferTask task = null;
         try {
-            task = getTaskFromCacheOrDB(taskId);
+            task = getAuthorizedTask(taskId);
             if (!TransferTaskStatus.initialized.equals(task.getStatus())) {
                 throw new BusinessException(I18nUtils.getMessage("task.status.incorrect", new Object[]{task.getStatus()}));
             }
@@ -247,34 +324,26 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
 
             transferSseService.sendStatusEvent(userId, taskId,
                     TransferTaskStatus.checking.name(), I18nUtils.getMessage("task.checking"));
-            // 处理空文件边界情况
-            if (task.getFileSize() == null || task.getFileSize() == 0) {
-                log.info("检测到空文件上传，直接执行快速完成逻辑: taskId={}", taskId);
-                return handleEmptyFileUpload(task, cmd.getFileMd5(), storagePlatformSettingId);
-            }
+            // 相同存储配置中的相同内容全局复用；回收站记录也属于有效引用。
+            try (FileObjectReferenceService.ReferenceLock ignored =
+                         objectReferenceService.acquireContentLock(
+                                 storagePlatformSettingId,
+                                 cmd.getFileMd5(),
+                                 task.getFileSize())) {
+                FileInfo existFile = objectReferenceService.findReusableFile(
+                        cmd.getFileMd5(), task.getFileSize(), storagePlatformSettingId);
+                if (existFile != null) {
+                    try (FileObjectReferenceService.ReferenceLock objectLock =
+                                 objectReferenceService.acquireObjectLock(
+                                         existFile.getStoragePlatformSettingId(), existFile.getObjectKey())) {
+                        return handleQuickUpload(task, existFile, cmd.getFileMd5(), storagePlatformSettingId);
+                    }
+                }
 
-            // 检查同存储平台是否存在相同MD5的文件（秒传）
-            QueryWrapper queryWrapper = new QueryWrapper();
-            String workspaceId = WorkspaceContext.getWorkspaceId();
-            queryWrapper.where(FILE_INFO.CONTENT_MD5.eq(cmd.getFileMd5())
-                    .and(FILE_INFO.WORKSPACE_ID.eq(workspaceId))
-                    .and(FILE_INFO.IS_DELETED.eq(CommonConstant.N)));
-            if (StringUtils.isEmpty(storagePlatformSettingId)) {
-                queryWrapper.and(FILE_INFO.STORAGE_PLATFORM_SETTING_ID.isNull());
-            } else {
-                queryWrapper.and(FILE_INFO.STORAGE_PLATFORM_SETTING_ID.eq(storagePlatformSettingId));
-            }
-            FileInfo existFile = fileInfoService.getOne(queryWrapper);
-            if (existFile != null) {
-                // 验证存储插件中文件是否真实存在
-                IStorageOperationService storageService =
-                        storageServiceFacade.getStorageService(storagePlatformSettingId);
-                if (storageService.isFileExist(existFile.getObjectKey())) {
-                    // 执行秒传：直接创建文件记录
-                    return handleQuickUpload(task, existFile, cmd.getFileMd5(), storagePlatformSettingId);
-                } else {
-                    // 清理无效的数据库记录
-                    fileInfoService.removeById(existFile.getId());
+                // 0 字节文件不需要分片上传，但仍在内容锁内创建，避免并发产生重复对象。
+                if (task.getFileSize() == null || task.getFileSize() == 0) {
+                    log.info("检测到空文件上传，直接执行快速完成逻辑: taskId={}", taskId);
+                    return handleEmptyFileUpload(task, cmd.getFileMd5(), storagePlatformSettingId);
                 }
             }
             // 不是秒传，需要正常上传
@@ -342,7 +411,7 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
                     task.getWorkspaceId(),
                     task.getParentId(),
                     task.getFileName(),
-                    CommonConstant.N,
+                    false,
                     null,
                     storagePlatformSettingId
             );
@@ -354,7 +423,7 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
             newFileInfo.setSuffix(task.getSuffix());
             newFileInfo.setSize(task.getFileSize());
             newFileInfo.setMimeType(task.getMimeType());
-            newFileInfo.setIsDir(CommonConstant.N);
+            newFileInfo.setIsDir(false);
             newFileInfo.setParentId(task.getParentId());
             newFileInfo.setWorkspaceId(task.getWorkspaceId());
             newFileInfo.setUserId(task.getUserId());
@@ -362,9 +431,21 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
             newFileInfo.setStoragePlatformSettingId(task.getStoragePlatformSettingId());
             newFileInfo.setUploadTime(now);
             newFileInfo.setUpdateTime(now);
-            newFileInfo.setIsDeleted(CommonConstant.N);
+            newFileInfo.setIsDeleted(false);
 
             fileInfoService.save(newFileInfo);
+
+            operationLogService.recordSuccessAs(
+                    task.getWorkspaceId(),
+                    task.getUserId(),
+                    resolveOperatorName(task.getUserId()),
+                    OperationType.UPLOAD,
+                    "上传文件（秒传）",
+                    "FILE",
+                    newFileInfo.getId(),
+                    newFileInfo.getDisplayName(),
+                    "文件大小: " + FileUtils.formatFileSize(newFileInfo.getSize())
+            );
 
             // 更新任务状态为已完成
             task.setFileMd5(fileMd5);
@@ -405,6 +486,7 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
     public void uploadChunk(byte[] fileBytes, UploadChunkCmd cmd) {
         String taskId = cmd.getTaskId();
         Integer chunkIndex = cmd.getChunkIndex();
+        getAuthorizedTask(taskId);
         // 异步上传分片
         CompletableFuture.runAsync(() -> {
             try {
@@ -532,7 +614,7 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
     public void pauseTransfer(String taskId) {
         FileTransferTask task = null;
         try {
-            task = getTaskFromCacheOrDB(taskId);
+            task = getAuthorizedTask(taskId);
             TransferTaskStatus currentStatus = task.getStatus();
 
             // 验证当前状态是否支持暂停（上传或下载中）
@@ -568,7 +650,7 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
     public void resumeTransfer(String taskId) {
         FileTransferTask task = null;
         try {
-            task = getTaskFromCacheOrDB(taskId);
+            task = getAuthorizedTask(taskId);
             TransferTaskStatus currentStatus = task.getStatus();
 
             // 验证当前状态是否支持恢复
@@ -617,6 +699,7 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
 
     @Override
     public Set<Integer> getUploadedChunks(String taskId) {
+        getAuthorizedTask(taskId);
         Map<Integer, String> chunks = cacheManager.getTransferredChunkList(taskId);
         return chunks.keySet();
     }
@@ -626,7 +709,7 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
     public void cancelTransfer(String taskId) {
         FileTransferTask task = null;
         try {
-            task = getTaskFromCacheOrDB(taskId);
+            task = getAuthorizedTask(taskId);
             TransferTaskStatus currentStatus = task.getStatus();
 
             // 检查任务状态是否可以取消
@@ -693,6 +776,7 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
     @Override
     @Transactional
     public FileInfo mergeChunks(String taskId) {
+        getAuthorizedTask(taskId);
         return doMergeChunks(taskId);
     }
 
@@ -768,34 +852,59 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
                     partETags
             );
 
-            String fileId = IdUtil.fastSimpleUUID();
-
             LocalDateTime completeTime = LocalDateTime.now();
+            String uploadedObjectKey = task.getObjectKey();
+            FileInfo fileInfo;
 
-            FileInfo fileInfo = new FileInfo();
-            fileInfo.setId(fileId);
-            fileInfo.setObjectKey(task.getObjectKey());
-            fileInfo.setOriginalName(task.getFileName());
-            fileInfo.setDisplayName(task.getFileName());
-            fileInfo.setSuffix(task.getSuffix());
-            fileInfo.setSize(task.getFileSize());
-            fileInfo.setMimeType(task.getMimeType());
-            fileInfo.setIsDir(CommonConstant.N);
-            fileInfo.setParentId(task.getParentId());
-            fileInfo.setWorkspaceId(task.getWorkspaceId());
-            fileInfo.setUserId(task.getUserId());
-            fileInfo.setContentMd5(task.getFileMd5());
-            fileInfo.setStoragePlatformSettingId(task.getStoragePlatformSettingId());
-            fileInfo.setUploadTime(completeTime);
-            fileInfo.setUpdateTime(completeTime);
-            fileInfo.setIsDeleted(CommonConstant.N);
+            // 合并完成后再次去重，解决多个相同文件并发上传时都未命中秒传的问题。
+            try (FileObjectReferenceService.ReferenceLock ignored =
+                         objectReferenceService.acquireContentLock(
+                                 task.getStoragePlatformSettingId(),
+                                 task.getFileMd5(),
+                                 task.getFileSize())) {
+                FileInfo reusableFile = objectReferenceService.findReusableFile(
+                        task.getFileMd5(), task.getFileSize(), task.getStoragePlatformSettingId());
+                if (reusableFile != null) {
+                    try (FileObjectReferenceService.ReferenceLock objectLock =
+                                 objectReferenceService.acquireObjectLock(
+                                         reusableFile.getStoragePlatformSettingId(), reusableFile.getObjectKey())) {
+                        fileInfo = buildUploadedFileInfo(task, reusableFile.getObjectKey(), completeTime);
+                        fileInfoService.save(fileInfo);
+                    }
+                } else {
+                    fileInfo = buildUploadedFileInfo(task, uploadedObjectKey, completeTime);
+                    fileInfoService.save(fileInfo);
+                }
+            }
 
-            fileInfoService.save(fileInfo);
+            if (!Objects.equals(uploadedObjectKey, fileInfo.getObjectKey())) {
+                try {
+                    storageService.deleteFile(uploadedObjectKey);
+                    log.info("并发上传去重成功，删除重复物理对象: taskId={}, objectKey={}",
+                            taskId, uploadedObjectKey);
+                } catch (Exception deleteError) {
+                    // 数据库已经引用已有对象，此处失败只会留下孤立对象，不会造成文件丢失。
+                    log.warn("删除并发上传产生的重复对象失败: taskId={}, objectKey={}",
+                            taskId, uploadedObjectKey, deleteError);
+                }
+            }
 
             task.setStatus(TransferTaskStatus.completed);
             task.setUploadedChunks(uploadedCount);
             task.setCompleteTime(completeTime);
             this.updateById(task);
+
+            operationLogService.recordSuccessAs(
+                    task.getWorkspaceId(),
+                    task.getUserId(),
+                    resolveOperatorName(task.getUserId()),
+                    OperationType.UPLOAD,
+                    "上传文件",
+                    "FILE",
+                    fileInfo.getId(),
+                    fileInfo.getDisplayName(),
+                    "文件大小: " + FileUtils.formatFileSize(fileInfo.getSize())
+            );
 
             cacheManager.cleanTask(taskId);
 
@@ -821,6 +930,27 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
         }
     }
 
+    private FileInfo buildUploadedFileInfo(FileTransferTask task, String objectKey, LocalDateTime completeTime) {
+        FileInfo fileInfo = new FileInfo();
+        fileInfo.setId(IdUtil.fastSimpleUUID());
+        fileInfo.setObjectKey(objectKey);
+        fileInfo.setOriginalName(task.getFileName());
+        fileInfo.setDisplayName(task.getFileName());
+        fileInfo.setSuffix(task.getSuffix());
+        fileInfo.setSize(task.getFileSize());
+        fileInfo.setMimeType(task.getMimeType());
+        fileInfo.setIsDir(false);
+        fileInfo.setParentId(task.getParentId());
+        fileInfo.setWorkspaceId(task.getWorkspaceId());
+        fileInfo.setUserId(task.getUserId());
+        fileInfo.setContentMd5(task.getFileMd5());
+        fileInfo.setStoragePlatformSettingId(task.getStoragePlatformSettingId());
+        fileInfo.setUploadTime(completeTime);
+        fileInfo.setUpdateTime(completeTime);
+        fileInfo.setIsDeleted(false);
+        return fileInfo;
+    }
+
     /**
      * 根据任务ID获取任务信息
      *
@@ -844,6 +974,19 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
             }
             // 缓存到 Redis
             cacheManager.cacheTask(task);
+        }
+        return task;
+    }
+
+    private FileTransferTask getAuthorizedTask(String taskId) {
+        if (StringUtils.isBlank(taskId)) {
+            throw new BusinessException(I18nUtils.getMessage("task.id.empty"));
+        }
+        FileTransferTask task = getTaskFromCacheOrDB(taskId);
+        String userId = StpUtil.getLoginIdAsString();
+        String workspaceId = WorkspaceContext.getWorkspaceId();
+        if (!Objects.equals(userId, task.getUserId()) || !Objects.equals(workspaceId, task.getWorkspaceId())) {
+            throw new BusinessException(I18nUtils.getMessage("file.no.permission.download"));
         }
         return task;
     }
@@ -956,11 +1099,21 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
         String storagePlatformSettingId = StoragePlatformContextHolder.getConfigId();
 
         QueryWrapper queryWrapper = new QueryWrapper();
-        queryWrapper.where(FILE_TRANSFER_TASK.STATUS.eq(TransferTaskStatus.completed))
+        queryWrapper.where(FILE_TRANSFER_TASK.STATUS.in(
+                        TransferTaskStatus.completed,
+                        TransferTaskStatus.failed,
+                        TransferTaskStatus.canceled))
                 .and(FILE_TRANSFER_TASK.USER_ID.eq(userId))
                 .and(FILE_TRANSFER_TASK.WORKSPACE_ID.eq(workspaceId))
-                .and(FILE_TRANSFER_TASK.STORAGE_PLATFORM_SETTING_ID.eq(storagePlatformSettingId));
+                // 文件收集任务由收集记录管理，不能被普通传输页清理。
+                .and(FILE_TRANSFER_TASK.COLLECTION_ID.isNull())
+                .and(FILE_TRANSFER_TASK.COLLECTION_SUBMISSION_ID.isNull());
+        applyStorageScope(queryWrapper, storagePlatformSettingId);
         List<FileTransferTask> tasks = this.list(queryWrapper);
+
+        if (tasks.isEmpty()) {
+            return;
+        }
 
         this.remove(queryWrapper);
 
@@ -970,6 +1123,30 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
 
         //清除缓存
         cacheManager.cleanTasks(taskIds);
+    }
+
+    /**
+     * 合并任务通常在异步线程完成，不能依赖当前请求线程的 Sa-Token 会话；
+     * 因此按任务中的用户 ID 查询稳定的用户名，避免把 ULID 当作操作人名称。
+     */
+    private String resolveOperatorName(String userId) {
+        if (StringUtils.isEmpty(userId)) {
+            return userId;
+        }
+        try {
+            SysUser user = sysUserService.getById(userId);
+            if (user != null) {
+                if (StringUtils.isNotEmpty(user.getUsername())) {
+                    return user.getUsername();
+                }
+                if (StringUtils.isNotEmpty(user.getNickname())) {
+                    return user.getNickname();
+                }
+            }
+        } catch (Exception e) {
+            log.warn("查询操作日志用户名失败: userId={}", userId, e);
+        }
+        return userId;
     }
 
     @Override
@@ -982,6 +1159,9 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
         if (!workspaceId.equals(fileInfo.getWorkspaceId())) {
             throw new BusinessException(I18nUtils.getMessage("file.no.permission.download"));
         }
+        if (Boolean.TRUE.equals(fileInfo.getIsDir())) {
+            return downloadDirectory(fileInfo);
+        }
         IStorageOperationService storageService = storageServiceFacade.getStorageService(fileInfo.getStoragePlatformSettingId());
         if (!storageService.isFileExist(fileInfo.getObjectKey())) {
             throw new BusinessException(I18nUtils.getMessage("file.download.failed.not.exist"));
@@ -993,6 +1173,844 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
         downloadVO.setFileSize(fileInfo.getSize());
         downloadVO.setResource(resource);
         return downloadVO;
+    }
+
+    @Override
+    public FolderDownloadTaskVO createFolderDownloadTask(String folderId) {
+        cleanupExpiredFolderDownloadTasks();
+
+        String userId = StpUtil.getLoginIdAsString();
+        String workspaceId = WorkspaceContext.getWorkspaceId();
+        String storagePlatformSettingId = StoragePlatformContextHolder.getConfigId();
+
+        FolderDownloadTask existingTask = findReusableFolderDownloadTask(userId, workspaceId, folderId);
+        if (existingTask != null) {
+            return toFolderDownloadTaskVO(existingTask);
+        }
+
+        FileInfo folderInfo = fileInfoService.getById(folderId);
+        if (folderInfo == null || !Boolean.TRUE.equals(folderInfo.getIsDir()) || Boolean.TRUE.equals(folderInfo.getIsDeleted())) {
+            throw new BusinessException("文件夹不存在");
+        }
+        if (!workspaceId.equals(folderInfo.getWorkspaceId())) {
+            throw new BusinessException(I18nUtils.getMessage("file.no.permission.download"));
+        }
+
+        FolderDownloadTask task = new FolderDownloadTask();
+        task.taskId = IdUtil.fastSimpleUUID();
+        task.userId = userId;
+        task.workspaceId = workspaceId;
+        task.storagePlatformSettingId = storagePlatformSettingId;
+        task.folderId = folderInfo.getId();
+        task.folderName = folderInfo.getDisplayName();
+        task.status = "queued";
+        task.progress = 0;
+        task.totalFiles = 0;
+        task.processedFiles = 0;
+        task.totalBytes = 0L;
+        task.processedBytes = 0L;
+        task.message = "正在创建下载任务";
+        task.createdAt = System.currentTimeMillis();
+        task.updatedAt = task.createdAt;
+        task.lastActivityAt = task.createdAt;
+        FutureTask<Void> buildFuture = new FutureTask<>(() -> {
+            buildFolderDownloadTask(task, folderInfo);
+            return null;
+        });
+        task.buildFuture = buildFuture;
+        folderDownloadTasks.put(task.taskId, task);
+        try {
+            fileMergeExecutor.execute(buildFuture);
+        } catch (RuntimeException e) {
+            folderDownloadTasks.remove(task.taskId, task);
+            throw e;
+        }
+        return toFolderDownloadTaskVO(task);
+    }
+
+    @Override
+    public FolderDownloadTaskVO getFolderDownloadTask(String taskId) {
+        cleanupExpiredFolderDownloadTasks();
+        return toFolderDownloadTaskVO(getAuthorizedFolderDownloadTask(taskId));
+    }
+
+    @Override
+    public void cancelFolderDownloadTask(String taskId) {
+        FolderDownloadTask task = getAuthorizedFolderDownloadTask(taskId);
+        cancelFolderDownloadTaskInternal(task, "用户取消文件夹打包", true);
+    }
+
+    @Override
+    public FileDownloadVO downloadFolderTaskFile(String taskId) {
+        FolderDownloadTask task = getAuthorizedFolderDownloadTask(taskId);
+        Path zipPath;
+        long zipSize;
+        synchronized (task) {
+            if (!"completed".equals(task.status)) {
+                throw new BusinessException("文件夹仍在打包中，请稍后再试");
+            }
+            zipPath = task.zipPath;
+            if (zipPath == null || !Files.exists(zipPath)) {
+                folderDownloadTasks.remove(taskId, task);
+                throw new BusinessException("下载文件已过期，请重新下载");
+            }
+            try {
+                zipSize = Files.size(zipPath);
+            } catch (IOException e) {
+                throw new StorageOperationException("读取文件夹压缩包失败: " + e.getMessage(), e);
+            }
+            task.activeDownloadCount++;
+            task.status = "downloading";
+            task.downloadStartedAt = System.currentTimeMillis();
+            task.lastActivityAt = task.downloadStartedAt;
+        }
+
+        String streamId = IdUtil.fastSimpleUUID();
+        try {
+            Path activeZipPath = normalizePath(zipPath);
+            DeleteOnCloseInputStream managedInputStream = new DeleteOnCloseInputStream(
+                    Files.newInputStream(zipPath),
+                    zipPath,
+                    false,
+                    () -> {
+                        activeFolderDownloadStreams.remove(streamId);
+                        activeFolderDownloadPaths.remove(activeZipPath);
+                        releaseFolderDownload(task);
+                    }
+            );
+            activeFolderDownloadStreams.put(streamId, managedInputStream);
+            InputStream inputStream = managedInputStream;
+            FileDownloadVO downloadVO = new FileDownloadVO();
+            downloadVO.setFileName(task.zipFileName);
+            downloadVO.setFileSize(zipSize);
+            downloadVO.setResource(new InputStreamResource(inputStream));
+            return downloadVO;
+        } catch (IOException e) {
+            activeFolderDownloadStreams.remove(streamId);
+            releaseFolderDownload(task);
+            throw new StorageOperationException("文件夹下载失败: " + e.getMessage(), e);
+        }
+    }
+
+    private FolderDownloadTask findReusableFolderDownloadTask(String userId, String workspaceId, String folderId) {
+        return folderDownloadTasks.values().stream()
+                .filter(task -> userId.equals(task.userId)
+                        && workspaceId.equals(task.workspaceId)
+                        && folderId.equals(task.folderId)
+                        && ("queued".equals(task.status)
+                        || "scanning".equals(task.status)
+                        || "packing".equals(task.status)
+                        || "completed".equals(task.status))
+                        && !task.cancelRequested)
+                .findFirst()
+                .orElse(null);
+    }
+
+    private FolderDownloadTask getAuthorizedFolderDownloadTask(String taskId) {
+        FolderDownloadTask task = folderDownloadTasks.get(taskId);
+        if (task == null) {
+            throw new BusinessException("文件夹下载任务不存在或已过期");
+        }
+
+        String userId = StpUtil.getLoginIdAsString();
+        String workspaceId = WorkspaceContext.getWorkspaceId();
+        if (!userId.equals(task.userId) || !workspaceId.equals(task.workspaceId)) {
+            throw new BusinessException(I18nUtils.getMessage("file.no.permission.download"));
+        }
+        return task;
+    }
+
+    private void buildFolderDownloadTask(FolderDownloadTask task, FileInfo folderInfo) {
+        task.buildStarted = true;
+        Path zipPath = null;
+        try {
+            checkFolderDownloadCancellation(task);
+            updateFolderDownloadTask(task, "scanning", 0, "正在统计文件");
+            FolderDownloadScanResult scanResult = scanDirectory(folderInfo, new HashSet<>(), task);
+            synchronized (task) {
+                task.totalFiles = scanResult.totalFiles;
+                task.totalBytes = scanResult.totalBytes;
+                touchFolderDownloadTask(task);
+            }
+
+            zipPath = createFolderDownloadZipPath(FOLDER_DOWNLOAD_TASK_PREFIX);
+            synchronized (task) {
+                task.zipPath = zipPath;
+                task.zipFileName = buildZipFileName(task.folderName);
+            }
+
+            updateFolderDownloadTask(task, "packing", 0, "正在打包文件夹");
+            try (ZipOutputStream zipOutputStream = new ZipOutputStream(Files.newOutputStream(zipPath))) {
+                writeDirectoryToZipWithProgress(folderInfo, sanitizeZipName(folderInfo.getDisplayName()),
+                        zipOutputStream, new HashSet<>(), task);
+            }
+
+            synchronized (task) {
+                checkFolderDownloadCancellation(task);
+                task.status = "completed";
+                task.progress = 100;
+                task.zipSize = Files.size(zipPath);
+                task.message = "打包完成，准备下载";
+                task.completedAt = System.currentTimeMillis();
+                task.updatedAt = task.completedAt;
+                task.lastActivityAt = task.completedAt;
+            }
+            log.info("文件夹打包完成: taskId={}, folderId={}, zipSize={}",
+                    task.taskId, task.folderId, task.zipSize);
+        } catch (FolderDownloadCanceledException e) {
+            log.info("文件夹打包任务已取消: taskId={}, folderId={}", task.taskId, task.folderId);
+            markFolderDownloadCanceled(task, e.getMessage());
+        } catch (Exception e) {
+            if (task.cancelRequested) {
+                log.info("文件夹打包任务中断并取消: taskId={}, folderId={}", task.taskId, task.folderId);
+                markFolderDownloadCanceled(task, "文件夹打包已取消");
+            } else {
+                log.error("文件夹打包任务失败: taskId={}, folderId={}", task.taskId, task.folderId, e);
+                synchronized (task) {
+                    task.status = "failed";
+                    task.progress = 0;
+                    task.errorMessage = e.getMessage();
+                    task.message = "打包失败";
+                    task.updatedAt = System.currentTimeMillis();
+                    task.lastActivityAt = task.updatedAt;
+                    task.completedAt = task.updatedAt;
+                }
+            }
+        } finally {
+            if (!"completed".equals(task.status)) {
+                deleteFolderDownloadZip(task.zipPath != null ? task.zipPath : zipPath);
+            }
+            task.currentInputStream = null;
+            task.buildFinished.countDown();
+            if ("canceled".equals(task.status)) {
+                folderDownloadTasks.remove(task.taskId, task);
+            }
+        }
+    }
+
+    private FolderDownloadScanResult scanDirectory(FileInfo dirInfo, Set<String> visitedDirIds,
+                                                    FolderDownloadTask task) throws IOException {
+        checkFolderDownloadCancellation(task);
+        FolderDownloadScanResult result = new FolderDownloadScanResult();
+        if (!visitedDirIds.add(dirInfo.getId())) {
+            return result;
+        }
+
+        for (FileInfo child : listDirectoryChildren(dirInfo)) {
+            checkFolderDownloadCancellation(task);
+            touchFolderDownloadTask(task);
+            if (Boolean.TRUE.equals(child.getIsDir())) {
+                FolderDownloadScanResult childResult = scanDirectory(child, visitedDirIds, task);
+                result.totalFiles += childResult.totalFiles;
+                result.totalBytes += childResult.totalBytes;
+            } else {
+                result.totalFiles += 1;
+                result.totalBytes += child.getSize() == null ? 0L : child.getSize();
+            }
+        }
+        return result;
+    }
+
+    private void writeDirectoryToZipWithProgress(FileInfo dirInfo, String dirPath,
+                                                 ZipOutputStream zipOutputStream, Set<String> visitedDirIds,
+                                                 FolderDownloadTask task) throws IOException {
+        checkFolderDownloadCancellation(task);
+        if (!visitedDirIds.add(dirInfo.getId())) {
+            return;
+        }
+
+        String normalizedDirPath = ensureTrailingSlash(dirPath);
+        zipOutputStream.putNextEntry(new ZipEntry(normalizedDirPath));
+        zipOutputStream.closeEntry();
+
+        for (FileInfo child : listDirectoryChildren(dirInfo)) {
+            checkFolderDownloadCancellation(task);
+            String childPath = normalizedDirPath + sanitizeZipName(child.getDisplayName());
+            if (Boolean.TRUE.equals(child.getIsDir())) {
+                writeDirectoryToZipWithProgress(child, childPath, zipOutputStream, visitedDirIds, task);
+            } else {
+                writeFileToZipWithProgress(child, childPath, zipOutputStream, task);
+            }
+        }
+    }
+
+    private void writeFileToZipWithProgress(FileInfo fileInfo, String zipEntryName,
+                                            ZipOutputStream zipOutputStream, FolderDownloadTask task) throws IOException {
+        checkFolderDownloadCancellation(task);
+        IStorageOperationService storageService = storageServiceFacade.getStorageService(fileInfo.getStoragePlatformSettingId());
+        if (!storageService.isFileExist(fileInfo.getObjectKey())) {
+            log.warn("文件夹打包时跳过不存在的文件: fileId={}, objectKey={}", fileInfo.getId(), fileInfo.getObjectKey());
+            incrementProcessedFile(task);
+            return;
+        }
+
+        zipOutputStream.putNextEntry(new ZipEntry(zipEntryName));
+        byte[] buffer = new byte[64 * 1024];
+        InputStream sourceInputStream = storageService.downloadFile(fileInfo.getObjectKey());
+        task.currentInputStream = sourceInputStream;
+        try (InputStream inputStream = sourceInputStream) {
+            int read;
+            while ((read = inputStream.read(buffer)) != -1) {
+                checkFolderDownloadCancellation(task);
+                zipOutputStream.write(buffer, 0, read);
+                addProcessedBytes(task, read);
+            }
+        } finally {
+            task.currentInputStream = null;
+            zipOutputStream.closeEntry();
+            incrementProcessedFile(task);
+        }
+    }
+
+    private void updateFolderDownloadTask(FolderDownloadTask task, String status, int progress, String message) {
+        synchronized (task) {
+            if (task.cancelRequested && !"canceled".equals(status)) {
+                return;
+            }
+            task.status = status;
+            task.progress = progress;
+            task.message = message;
+            touchFolderDownloadTask(task);
+        }
+    }
+
+    private void addProcessedBytes(FolderDownloadTask task, long bytes) {
+        synchronized (task) {
+            task.processedBytes += bytes;
+            updateFolderDownloadProgress(task);
+        }
+    }
+
+    private void incrementProcessedFile(FolderDownloadTask task) {
+        synchronized (task) {
+            task.processedFiles += 1;
+            updateFolderDownloadProgress(task);
+        }
+    }
+
+    private void updateFolderDownloadProgress(FolderDownloadTask task) {
+        if (task.cancelRequested) {
+            return;
+        }
+        int progress = 0;
+        if (task.totalBytes != null && task.totalBytes > 0) {
+            progress = (int) Math.floor((task.processedBytes * 100.0) / task.totalBytes);
+        } else if (task.totalFiles != null && task.totalFiles > 0) {
+            progress = (int) Math.floor((task.processedFiles * 100.0) / task.totalFiles);
+        }
+        task.progress = Math.max(0, Math.min(99, progress));
+        task.message = "正在打包文件夹";
+        touchFolderDownloadTask(task);
+    }
+
+    private FolderDownloadTaskVO toFolderDownloadTaskVO(FolderDownloadTask task) {
+        synchronized (task) {
+            FolderDownloadTaskVO vo = new FolderDownloadTaskVO();
+            vo.setTaskId(task.taskId);
+            vo.setFolderId(task.folderId);
+            vo.setFolderName(task.folderName);
+            vo.setStatus(task.status);
+            vo.setProgress(task.progress);
+            vo.setTotalFiles(task.totalFiles);
+            vo.setProcessedFiles(task.processedFiles);
+            vo.setTotalBytes(task.totalBytes);
+            vo.setProcessedBytes(task.processedBytes);
+            vo.setZipSize(task.zipSize);
+            vo.setMessage(task.message);
+            vo.setErrorMessage(task.errorMessage);
+            return vo;
+        }
+    }
+
+    private void checkFolderDownloadCancellation(FolderDownloadTask task) throws FolderDownloadCanceledException {
+        if (task.cancelRequested || Thread.currentThread().isInterrupted()) {
+            throw new FolderDownloadCanceledException("文件夹打包已取消");
+        }
+    }
+
+    private void touchFolderDownloadTask(FolderDownloadTask task) {
+        synchronized (task) {
+            if (task.cancelRequested) {
+                return;
+            }
+            long now = System.currentTimeMillis();
+            task.updatedAt = now;
+            task.lastActivityAt = now;
+        }
+    }
+
+    private void markFolderDownloadCanceled(FolderDownloadTask task, String message) {
+        synchronized (task) {
+            task.cancelRequested = true;
+            task.status = "canceled";
+            task.message = StringUtils.isEmpty(message) ? "文件夹打包已取消" : message;
+            task.errorMessage = null;
+            task.updatedAt = System.currentTimeMillis();
+            task.lastActivityAt = task.updatedAt;
+            task.completedAt = task.updatedAt;
+        }
+    }
+
+    private boolean cancelFolderDownloadTaskInternal(FolderDownloadTask task, String message,
+                                                      boolean rejectAlreadyStartedDownload) {
+        Future<?> buildFuture;
+        InputStream currentInputStream;
+        boolean needsCancellation;
+        boolean shouldInterrupt;
+        synchronized (task) {
+            if ("completed".equals(task.status) || "downloading".equals(task.status)) {
+                if (rejectAlreadyStartedDownload) {
+                    throw new BusinessException("文件夹已经开始下载，不能取消");
+                }
+                return false;
+            }
+            needsCancellation = !"failed".equals(task.status) && !"canceled".equals(task.status);
+            shouldInterrupt = !"failed".equals(task.status);
+            if (needsCancellation) {
+                markFolderDownloadCanceled(task, message);
+            }
+            buildFuture = task.buildFuture;
+            currentInputStream = task.currentInputStream;
+        }
+
+        if (shouldInterrupt && currentInputStream != null) {
+            try {
+                currentInputStream.close();
+            } catch (IOException e) {
+                log.debug("关闭已取消文件夹打包的输入流失败: taskId={}", task.taskId, e);
+            }
+        }
+        if (shouldInterrupt && buildFuture != null && !buildFuture.isDone()) {
+            buildFuture.cancel(true);
+        }
+        if (!task.buildStarted && (buildFuture == null || buildFuture.isDone())) {
+            task.buildFinished.countDown();
+        }
+
+        try {
+            if (!task.buildFinished.await(FOLDER_DOWNLOAD_CANCEL_WAIT_SECONDS, TimeUnit.SECONDS)) {
+                deleteFolderDownloadZip(task.zipPath);
+                log.warn("文件夹打包取消后仍在退出，交由后台清理: taskId={}", task.taskId);
+                return true;
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("等待文件夹打包取消被中断: taskId={}", task.taskId);
+            return true;
+        }
+
+        deleteFolderDownloadZip(task.zipPath);
+        folderDownloadTasks.remove(task.taskId, task);
+        return true;
+    }
+
+    private void releaseFolderDownload(FolderDownloadTask task) {
+        boolean finished;
+        synchronized (task) {
+            if (task.activeDownloadCount > 0) {
+                task.activeDownloadCount--;
+            }
+            task.lastActivityAt = System.currentTimeMillis();
+            finished = task.activeDownloadCount == 0;
+        }
+        if (finished) {
+            deleteFolderDownloadZip(task.zipPath);
+            folderDownloadTasks.remove(task.taskId, task);
+        }
+    }
+
+    private boolean isFolderDownloadTaskActive(String status) {
+        return "queued".equals(status) || "scanning".equals(status) || "packing".equals(status);
+    }
+
+    private Path createFolderDownloadZipPath(String prefix) throws IOException {
+        Path tempDirectory = resolveFolderDownloadTempDirectory();
+        Files.createDirectories(tempDirectory);
+        return Files.createTempFile(tempDirectory, prefix, ".zip");
+    }
+
+    private Path resolveFolderDownloadTempDirectory() {
+        if (StringUtils.isEmpty(folderDownloadTempDir)) {
+            return Path.of(System.getProperty("java.io.tmpdir"), "free-fs-folder-download")
+                    .toAbsolutePath().normalize();
+        }
+        return Path.of(folderDownloadTempDir).toAbsolutePath().normalize();
+    }
+
+    private Path normalizePath(Path path) {
+        return path == null ? null : path.toAbsolutePath().normalize();
+    }
+
+    private void addProtectedPath(Set<Path> protectedPaths, Path path) {
+        if (path != null) {
+            protectedPaths.add(path);
+        }
+    }
+
+    private boolean isFolderDownloadZipFile(Path path) {
+        if (path == null || path.getFileName() == null) {
+            return false;
+        }
+        String fileName = path.getFileName().toString();
+        return fileName.endsWith(".zip")
+                && (fileName.startsWith(FOLDER_DOWNLOAD_TASK_PREFIX)
+                || fileName.startsWith(FOLDER_DOWNLOAD_DIRECT_PREFIX));
+    }
+
+    private boolean isAllowedFolderDownloadTempPath(Path path) {
+        Path normalized = normalizePath(path);
+        if (normalized == null || !isFolderDownloadZipFile(normalized)) {
+            return false;
+        }
+        Path dedicatedDirectory = resolveFolderDownloadTempDirectory();
+        Path legacyDirectory = Path.of(System.getProperty("java.io.tmpdir")).toAbsolutePath().normalize();
+        Path parent = normalized.getParent();
+        return normalized.startsWith(dedicatedDirectory)
+                || (parent != null && parent.equals(legacyDirectory));
+    }
+
+    private void deleteFolderDownloadZip(Path path) {
+        if (path == null) {
+            return;
+        }
+        if (!isAllowedFolderDownloadTempPath(path)) {
+            log.warn("拒绝删除非文件夹下载临时文件: {}", path);
+            return;
+        }
+        try {
+            Files.deleteIfExists(path);
+        } catch (IOException e) {
+            log.warn("删除文件夹下载临时文件失败: {}", path, e);
+        }
+    }
+
+    private void cleanupStaleActiveFolderDownloadStreams(long now) {
+        for (DeleteOnCloseInputStream inputStream : activeFolderDownloadStreams.values()) {
+            if (now - inputStream.getLastActivityAt() > FOLDER_DOWNLOAD_TASK_TTL_MS) {
+                try {
+                    inputStream.close();
+                } catch (IOException e) {
+                    log.warn("关闭超时文件夹下载流失败", e);
+                }
+            }
+        }
+    }
+
+    private void cleanupOrphanFolderDownloadFiles(Set<Path> protectedPaths, long now) {
+        Set<Path> scanDirectories = new LinkedHashSet<>();
+        scanDirectories.add(resolveFolderDownloadTempDirectory());
+        scanDirectories.add(Path.of(System.getProperty("java.io.tmpdir")).toAbsolutePath().normalize());
+
+        for (Path directory : scanDirectories) {
+            if (!Files.isDirectory(directory)) {
+                continue;
+            }
+            try (DirectoryStream<Path> paths = Files.newDirectoryStream(directory, this::isFolderDownloadZipFile)) {
+                for (Path path : paths) {
+                    Path normalized = normalizePath(path);
+                    if (protectedPaths.contains(normalized) || !Files.isRegularFile(normalized)) {
+                        continue;
+                    }
+                    long lastModifiedAt = Files.getLastModifiedTime(normalized).toMillis();
+                    if (now - lastModifiedAt > FOLDER_DOWNLOAD_TASK_TTL_MS) {
+                        deleteFolderDownloadZip(normalized);
+                        log.info("清理孤立文件夹下载临时文件: {}", normalized);
+                    }
+                }
+            } catch (IOException e) {
+                log.warn("扫描文件夹下载临时目录失败: {}", directory, e);
+            }
+        }
+    }
+
+    @EventListener(ApplicationReadyEvent.class)
+    public void cleanupFolderDownloadTasksOnStartup() {
+        log.info("应用启动，开始检查文件夹下载临时文件");
+        cleanupExpiredFolderDownloadTasks(true);
+    }
+
+    @Scheduled(fixedDelay = FOLDER_DOWNLOAD_CLEANUP_INTERVAL_MS,
+            initialDelay = FOLDER_DOWNLOAD_CLEANUP_INTERVAL_MS)
+    public void scheduledFolderDownloadCleanup() {
+        cleanupExpiredFolderDownloadTasks(true);
+    }
+
+    private void cleanupExpiredFolderDownloadTasks() {
+        cleanupExpiredFolderDownloadTasks(false);
+    }
+
+    private void cleanupExpiredFolderDownloadTasks(boolean scanOrphanFiles) {
+        long now = System.currentTimeMillis();
+        cleanupStaleActiveFolderDownloadStreams(now);
+        Set<Path> protectedPaths = new HashSet<>(activeFolderDownloadPaths);
+        activeFolderDownloadStreams.values().forEach(inputStream ->
+                addProtectedPath(protectedPaths, normalizePath(inputStream.getPath())));
+
+        for (Map.Entry<String, FolderDownloadTask> entry : folderDownloadTasks.entrySet()) {
+            FolderDownloadTask task = entry.getValue();
+            boolean shouldCancel = false;
+            boolean shouldRemove = false;
+
+            synchronized (task) {
+                Path taskPath = normalizePath(task.zipPath);
+                boolean buildFinished = task.buildFinished.getCount() == 0;
+
+                if (task.activeDownloadCount > 0 || "downloading".equals(task.status)) {
+                    addProtectedPath(protectedPaths, taskPath);
+                } else if (isFolderDownloadTaskActive(task.status)) {
+                    if (now - task.lastActivityAt > FOLDER_DOWNLOAD_TASK_TTL_MS) {
+                        shouldCancel = true;
+                    } else {
+                        addProtectedPath(protectedPaths, taskPath);
+                    }
+                } else if ("completed".equals(task.status)) {
+                    if (buildFinished && now - task.completedAt > FOLDER_DOWNLOAD_TASK_TTL_MS) {
+                        task.status = "expired";
+                        task.message = "下载文件已过期";
+                        shouldRemove = true;
+                    } else {
+                        addProtectedPath(protectedPaths, taskPath);
+                    }
+                } else if (("failed".equals(task.status) || "canceled".equals(task.status)) && buildFinished) {
+                    shouldRemove = true;
+                } else if ("canceled".equals(task.status)
+                        && now - task.lastActivityAt > FOLDER_DOWNLOAD_TASK_TTL_MS) {
+                    shouldCancel = true;
+                } else {
+                    addProtectedPath(protectedPaths, taskPath);
+                }
+            }
+
+            if (shouldCancel) {
+                log.warn("文件夹打包任务超过2小时无活动，自动取消: taskId={}", task.taskId);
+                boolean canceled = cancelFolderDownloadTaskInternal(
+                        task, "文件夹打包超时，已自动取消", false);
+                if (!canceled) {
+                    synchronized (task) {
+                        addProtectedPath(protectedPaths, normalizePath(task.zipPath));
+                    }
+                }
+            } else if (shouldRemove) {
+                deleteFolderDownloadZip(task.zipPath);
+                folderDownloadTasks.remove(entry.getKey(), task);
+            }
+        }
+
+        if (scanOrphanFiles) {
+            cleanupOrphanFolderDownloadFiles(protectedPaths, now);
+        }
+    }
+
+    private FileDownloadVO downloadDirectory(FileInfo dirInfo) {
+        Path zipPath = null;
+        Path activeZipPath = null;
+        String streamId = null;
+        try {
+            zipPath = createFolderDownloadZipPath(FOLDER_DOWNLOAD_DIRECT_PREFIX);
+            activeZipPath = normalizePath(zipPath);
+            activeFolderDownloadPaths.add(activeZipPath);
+            try (ZipOutputStream zipOutputStream = new ZipOutputStream(Files.newOutputStream(zipPath))) {
+                writeDirectoryToZip(dirInfo, sanitizeZipName(dirInfo.getDisplayName()), zipOutputStream, new HashSet<>());
+            }
+
+            long zipSize = Files.size(zipPath);
+            streamId = IdUtil.fastSimpleUUID();
+            String downloadStreamId = streamId;
+            Path downloadZipPath = activeZipPath;
+            DeleteOnCloseInputStream managedInputStream = new DeleteOnCloseInputStream(
+                    Files.newInputStream(zipPath),
+                    zipPath,
+                    true,
+                    () -> {
+                        activeFolderDownloadStreams.remove(downloadStreamId);
+                        activeFolderDownloadPaths.remove(downloadZipPath);
+                    }
+            );
+            activeFolderDownloadStreams.put(downloadStreamId, managedInputStream);
+            InputStream inputStream = managedInputStream;
+            FileDownloadVO downloadVO = new FileDownloadVO();
+            downloadVO.setFileName(buildZipFileName(dirInfo.getDisplayName()));
+            downloadVO.setFileSize(zipSize);
+            downloadVO.setResource(new InputStreamResource(inputStream));
+            return downloadVO;
+        } catch (Exception e) {
+            if (streamId != null) {
+                activeFolderDownloadStreams.remove(streamId);
+            }
+            if (activeZipPath != null) {
+                activeFolderDownloadPaths.remove(activeZipPath);
+            }
+            deleteFolderDownloadZip(zipPath);
+            throw new StorageOperationException("文件夹下载失败: " + e.getMessage(), e);
+        }
+    }
+
+    private void writeDirectoryToZip(FileInfo dirInfo, String dirPath,
+                                     ZipOutputStream zipOutputStream, Set<String> visitedDirIds) throws IOException {
+        if (!visitedDirIds.add(dirInfo.getId())) {
+            return;
+        }
+
+        String normalizedDirPath = ensureTrailingSlash(dirPath);
+        zipOutputStream.putNextEntry(new ZipEntry(normalizedDirPath));
+        zipOutputStream.closeEntry();
+
+        for (FileInfo child : listDirectoryChildren(dirInfo)) {
+            String childPath = normalizedDirPath + sanitizeZipName(child.getDisplayName());
+            if (Boolean.TRUE.equals(child.getIsDir())) {
+                writeDirectoryToZip(child, childPath, zipOutputStream, visitedDirIds);
+            } else {
+                writeFileToZip(child, childPath, zipOutputStream);
+            }
+        }
+    }
+
+    private void writeFileToZip(FileInfo fileInfo, String zipEntryName, ZipOutputStream zipOutputStream) throws IOException {
+        IStorageOperationService storageService = storageServiceFacade.getStorageService(fileInfo.getStoragePlatformSettingId());
+        if (!storageService.isFileExist(fileInfo.getObjectKey())) {
+            log.warn("文件夹打包时跳过不存在的文件: fileId={}, objectKey={}", fileInfo.getId(), fileInfo.getObjectKey());
+            return;
+        }
+
+        zipOutputStream.putNextEntry(new ZipEntry(zipEntryName));
+        try (InputStream inputStream = storageService.downloadFile(fileInfo.getObjectKey())) {
+            inputStream.transferTo(zipOutputStream);
+        } finally {
+            zipOutputStream.closeEntry();
+        }
+    }
+
+    private List<FileInfo> listDirectoryChildren(FileInfo dirInfo) {
+        QueryWrapper queryWrapper = new QueryWrapper();
+        queryWrapper.where(FILE_INFO.PARENT_ID.eq(dirInfo.getId())
+                .and(FILE_INFO.WORKSPACE_ID.eq(dirInfo.getWorkspaceId()))
+                .and(FILE_INFO.IS_DELETED.eq(false)));
+        if (StringUtils.isEmpty(dirInfo.getStoragePlatformSettingId())) {
+            queryWrapper.and(FILE_INFO.STORAGE_PLATFORM_SETTING_ID.isNull());
+        } else {
+            queryWrapper.and(FILE_INFO.STORAGE_PLATFORM_SETTING_ID.eq(dirInfo.getStoragePlatformSettingId()));
+        }
+        queryWrapper.orderBy(FILE_INFO.IS_DIR.desc())
+                .orderBy(FILE_INFO.DISPLAY_NAME.asc());
+        return fileInfoService.list(queryWrapper);
+    }
+
+    private String sanitizeZipName(String name) {
+        String safeName = StringUtils.isEmpty(name) ? "未命名" : name;
+        safeName = safeName.replace("\\", "/");
+        safeName = safeName.replaceAll("^/+", "");
+        safeName = safeName.replace("../", "");
+        return safeName.replace("/", "_");
+    }
+
+    private String ensureTrailingSlash(String path) {
+        return path.endsWith("/") ? path : path + "/";
+    }
+
+    private String buildZipFileName(String displayName) {
+        String safeName = StringUtils.isEmpty(displayName) ? "文件夹" : displayName;
+        return safeName.toLowerCase(Locale.ROOT).endsWith(".zip") ? safeName : safeName + ".zip";
+    }
+
+    private static class DeleteOnCloseInputStream extends FilterInputStream {
+        private final Path path;
+        private final boolean deletePathOnClose;
+        private final Runnable onClose;
+        private volatile long lastActivityAt = System.currentTimeMillis();
+        private boolean closed;
+
+        protected DeleteOnCloseInputStream(InputStream in, Path path, boolean deletePathOnClose,
+                                          Runnable onClose) {
+            super(in);
+            this.path = path;
+            this.deletePathOnClose = deletePathOnClose;
+            this.onClose = onClose;
+        }
+
+        private Path getPath() {
+            return path;
+        }
+
+        @Override
+        public int read() throws IOException {
+            int value = super.read();
+            lastActivityAt = System.currentTimeMillis();
+            return value;
+        }
+
+        @Override
+        public int read(byte[] buffer, int offset, int length) throws IOException {
+            int count = super.read(buffer, offset, length);
+            lastActivityAt = System.currentTimeMillis();
+            return count;
+        }
+
+        private long getLastActivityAt() {
+            return lastActivityAt;
+        }
+
+        @Override
+        public synchronized void close() throws IOException {
+            if (closed) {
+                return;
+            }
+            closed = true;
+            try {
+                super.close();
+            } finally {
+                try {
+                    if (deletePathOnClose) {
+                        Files.deleteIfExists(path);
+                    }
+                } finally {
+                    if (onClose != null) {
+                        onClose.run();
+                    }
+                }
+            }
+        }
+    }
+
+    private static class FolderDownloadCanceledException extends IOException {
+        private FolderDownloadCanceledException(String message) {
+            super(message);
+        }
+    }
+
+    private static class FolderDownloadTask {
+        private String taskId;
+        private String userId;
+        private String workspaceId;
+        private String storagePlatformSettingId;
+        private String folderId;
+        private String folderName;
+        private volatile String status;
+        private Integer progress;
+        private Integer totalFiles;
+        private Integer processedFiles;
+        private Long totalBytes;
+        private Long processedBytes;
+        private Long zipSize;
+        private String zipFileName;
+        private volatile Path zipPath;
+        private String message;
+        private String errorMessage;
+        private long createdAt;
+        private long updatedAt;
+        private long completedAt;
+        private long lastActivityAt;
+        private long downloadStartedAt;
+        private int activeDownloadCount;
+        private volatile boolean cancelRequested;
+        private volatile boolean buildStarted;
+        private volatile Future<?> buildFuture;
+        private volatile InputStream currentInputStream;
+        private final CountDownLatch buildFinished = new CountDownLatch(1);
+    }
+
+    private static class FolderDownloadScanResult {
+        private int totalFiles;
+        private long totalBytes;
     }
 
     /**
@@ -1035,14 +2053,7 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
                 );
             }
 
-            FileInfo fileInfo = fileInfoService.getById(cmd.getFileId());
-            if (fileInfo == null) {
-                throw new BusinessException(I18nUtils.getMessage("file.not.found"));
-            }
-
-            if (!workspaceId.equals(fileInfo.getWorkspaceId())) {
-                throw new BusinessException(I18nUtils.getMessage("file.no.permission.download.file"));
-            }
+            FileInfo fileInfo = fileInfoService.getAuthorizedFile(cmd.getFileId());
 
             IStorageOperationService storageService =
                     storageServiceFacade.getStorageService(fileInfo.getStoragePlatformSettingId());
@@ -1272,6 +2283,7 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
     @Override
     public Set<Integer> getDownloadedChunks(String taskId) {
         try {
+            getAuthorizedTask(taskId);
             String chunksKey = "download:chunks:" + taskId;
             Set<Object> chunks = cacheManager.sGet(chunksKey);
 
@@ -1304,19 +2316,7 @@ public class FileTransferTaskServiceImpl extends ServiceImpl<FileTransferTaskMap
 
     @Override
     public FileTransferTask getTask(String taskId) {
-        if (StringUtils.isBlank(taskId)) {
-            throw new BusinessException(I18nUtils.getMessage("task.id.empty"));
-        }
-
-        QueryWrapper queryWrapper = QueryWrapper.create()
-                .where(FILE_TRANSFER_TASK.TASK_ID.eq(taskId));
-
-        FileTransferTask task = this.getOne(queryWrapper);
-        if (task == null) {
-            throw new BusinessException(I18nUtils.getMessage("task.not.exist", new Object[]{taskId}));
-        }
-
-        return task;
+        return getAuthorizedTask(taskId);
     }
 
 }

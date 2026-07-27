@@ -42,7 +42,7 @@ services:
     environment:
       - SPRING_PROFILES_ACTIVE=docker
       # 直接通过服务名连接，内部网络互通
-      - SPRING_DATASOURCE_URL=jdbc:mysql://free-fs-mysql:3306/free-fs?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai
+      - SPRING_DATASOURCE_URL=jdbc:mysql://free-fs-mysql:3306/free-fs?useUnicode=true&characterEncoding=UTF-8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
       - SPRING_DATA_REDIS_HOST=free-fs-redis
     volumes:
       - ./logs:/logs

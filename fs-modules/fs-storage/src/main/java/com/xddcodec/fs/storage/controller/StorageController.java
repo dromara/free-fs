@@ -2,6 +2,8 @@ package com.xddcodec.fs.storage.controller;
 
 import cn.dev33.satoken.annotation.SaCheckPermission;
 import com.xddcodec.fs.framework.common.domain.Result;
+import com.xddcodec.fs.log.constant.OperationType;
+import com.xddcodec.fs.log.service.SysOperationLogService;
 import com.xddcodec.fs.storage.domain.StoragePlatform;
 import com.xddcodec.fs.storage.domain.StorageSetting;
 import com.xddcodec.fs.storage.domain.cmd.StorageSettingAddCmd;
@@ -30,6 +32,8 @@ public class StorageController {
 
     private final StorageSettingService storageSettingService;
 
+    private final SysOperationLogService operationLogService;
+
     @Operation(summary = "获取存储平台列表")
     @GetMapping("/platforms")
     public Result<List<StoragePlatformVO>> getPlatforms() {
@@ -39,6 +43,7 @@ public class StorageController {
 
     @Operation(summary = "获取用户存储平台配置列表")
     @GetMapping("/platform/settings")
+    @SaCheckPermission("storage:manage")
     public Result<List<StorageSettingUserVO>> getStorageSettingsByUser() {
         List<StorageSettingUserVO> result = storageSettingService.getStorageSettingsByUser();
         return Result.ok(result);
@@ -56,6 +61,14 @@ public class StorageController {
     @SaCheckPermission("storage:manage")
     public Result<StorageSetting> enableOrDisableStoragePlatform(@PathVariable("id") String id, @PathVariable("action") Integer action) {
         storageSettingService.enableOrDisableStoragePlatform(id, action);
+        operationLogService.recordSuccess(
+                OperationType.SWITCH_STORAGE,
+                action == 0 ? "禁用存储配置" : "启用存储配置",
+                "STORAGE",
+                id,
+                id,
+                null
+        );
         return Result.ok();
     }
 
@@ -64,6 +77,14 @@ public class StorageController {
     @SaCheckPermission("storage:manage")
     public Result<StorageSetting> saveOrUpdateStorageSetting(@Validated @RequestBody StorageSettingAddCmd cmd) {
         storageSettingService.addStorageSetting(cmd);
+        operationLogService.recordSuccess(
+                OperationType.ADD_STORAGE,
+                "新增存储配置",
+                "STORAGE",
+                null,
+                cmd.getRemark(),
+                "存储类型: " + cmd.getPlatformIdentifier()
+        );
         return Result.ok();
     }
 
@@ -72,6 +93,14 @@ public class StorageController {
     @SaCheckPermission("storage:manage")
     public Result<StorageSetting> saveOrUpdateStorageSetting(@Validated @RequestBody StorageSettingEditCmd cmd) {
         storageSettingService.editStorageSetting(cmd);
+        operationLogService.recordSuccess(
+                OperationType.UPDATE_STORAGE,
+                "修改存储配置",
+                "STORAGE",
+                cmd.getSettingId(),
+                cmd.getRemark(),
+                null
+        );
         return Result.ok();
     }
 
@@ -79,7 +108,16 @@ public class StorageController {
     @DeleteMapping("/settings/{id}")
     @SaCheckPermission("storage:manage")
     public Result<StorageSetting> saveOrUpdateStorageSetting(@PathVariable String id) {
+        StorageSetting setting = storageSettingService.getById(id);
         storageSettingService.deleteStorageSettingById(id);
+        operationLogService.recordSuccess(
+                OperationType.DELETE_STORAGE,
+                "删除存储配置",
+                "STORAGE",
+                id,
+                setting == null ? id : setting.getRemark(),
+                setting == null ? null : "存储类型: " + setting.getPlatformIdentifier()
+        );
         return Result.ok();
     }
 

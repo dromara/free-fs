@@ -108,11 +108,10 @@ public class JodConverterConfiguration {
 
     @Bean
     public OfficeToPdfConverter officeToPdfConverter(
-            OfficeManager officeManager,
             OfficeToPdfConfig config,
             OfficeTaskQueueHandler officeTaskQueueHandler) {
 
-        return new OfficeToPdfConverter(officeManager, config, officeTaskQueueHandler);
+        return new OfficeToPdfConverter(config, officeTaskQueueHandler);
     }
 
     @Bean

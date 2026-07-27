@@ -11,13 +11,17 @@ spring:
     name: free-fs
   profiles:
     active: dev
+  mvc:
+    async:
+      # Office 转 PDF 最长等待约 335 秒，避免提前关闭对象存储文件流
+      request-timeout: 360s
   jackson:
     time-zone: GMT+8
     date-format: yyyy-MM-dd HH:mm:ss
   servlet:
     multipart:
-      max-file-size: 500MB
-      max-request-size: 500MB
+      max-file-size: -1
+      max-request-size: -1
   web:
     resources:
       # 添加静态资源位置
@@ -54,10 +58,10 @@ spring:
     #编码集
     default-encoding: UTF-8
     #发送邮件的账户
-    username: dh_freedom@qq.com
-    form: Free-Fs <dh_freedom@qq.com>
+    username: 3128788868@qq.com
+    form: Free-Fs <3128788868@qq.com>
     #授权码
-    password: xxxxxxxxxxxx
+    password: ${MAIL_PASSWORD:}
     properties:
       mail:
         smtp:
@@ -111,12 +115,16 @@ mybatis-flex:
 
 --- # 认证授权相关配置
 security:
+  auth-cookie:
+    secure: ${AUTH_COOKIE_SECURE:false}
+    same-site: ${AUTH_COOKIE_SAME_SITE:Strict}
   # 拦截路由前缀
   path-pattern: /apis/**
   #排除不需要登录认证的接口
   excludes:
     - /apis/auth/login
     - /apis/auth/login/**
+    - /apis/transfer/sse
     - /apis/user/register
     - /apis/user/forget-password/code/**
     - /apis/user/forget-password
@@ -125,7 +133,7 @@ security:
     - /apis/share/verify/code
     - /apis/share/**/info
     - /apis/share/**/download/**
-    - /apis/transfer/sse
+    - /apis/file-collections/public/**
     - /dav/**
     - /webdav-test/**
 
@@ -135,6 +143,7 @@ sa-token:
   token-name: Authorization
   # token 前缀
   token-prefix: Bearer
+  cookie-auto-fill-prefix: true
   # token 有效期（单位：秒） 默认30天，-1 代表永久有效
   timeout: 86400
   # token 最低活跃频率（单位：秒），如果 token 超过此时间没有访问系统就会被冻结，默认-1 代表不限制，永不冻结
@@ -148,6 +157,10 @@ sa-token:
   token-style: random-128
   # 是否输出操作日志
   is-log: true
+  cookie:
+    http-only: true
+    secure: ${AUTH_COOKIE_SECURE:false}
+    same-site: ${AUTH_COOKIE_SAME_SITE:Strict}
   # jwt秘钥
   jwt-secret-key: asdasdasifhueuiwyurfewbfjsdafjk
 
@@ -155,3 +168,7 @@ sa-token:
 springdoc:
   swagger-ui:
     path: /swagger-ui.html
+
+fs:
+  cors:
+    allowed-origins: ${FS_CORS_ALLOWED_ORIGINS:http://localhost,http://127.0.0.1,http://localhost:5173,http://127.0.0.1:5173}

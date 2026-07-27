@@ -1,5 +1,6 @@
 package com.xddcodec.fs.file.controller;
 
+import cn.dev33.satoken.stp.StpUtil;
 import com.xddcodec.fs.file.domain.dto.CheckUploadCmd;
 import com.xddcodec.fs.file.domain.dto.InitDownloadCmd;
 import com.xddcodec.fs.file.domain.dto.InitUploadCmd;
@@ -10,10 +11,14 @@ import com.xddcodec.fs.file.domain.qry.TransferFilesQry;
 import com.xddcodec.fs.file.domain.vo.CheckUploadResultVO;
 import com.xddcodec.fs.file.domain.vo.FileDownloadVO;
 import com.xddcodec.fs.file.domain.vo.FileTransferTaskVO;
+import com.xddcodec.fs.file.domain.vo.FolderDownloadTaskVO;
 import com.xddcodec.fs.file.domain.vo.InitDownloadResultVO;
 import com.xddcodec.fs.file.service.FileTransferTaskService;
 import com.xddcodec.fs.framework.common.domain.Result;
+import com.xddcodec.fs.framework.common.utils.FileUtils;
 import com.xddcodec.fs.framework.sse.SseConnectionManager;
+import com.xddcodec.fs.log.constant.OperationType;
+import com.xddcodec.fs.log.service.SysOperationLogService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.enums.ParameterIn;
@@ -53,6 +58,7 @@ public class FileTransferController {
 
     private final FileTransferTaskService fileTransferTaskService;
     private final SseConnectionManager sseConnectionManager;
+    private final SysOperationLogService operationLogService;
 
     @GetMapping("/files")
     @Operation(summary = "获取传输列表", description = "获取传输列表")
@@ -63,9 +69,17 @@ public class FileTransferController {
 
     @GetMapping("/sse")
     @Operation(summary = "建立SSE连接", description = "建立SSE连接以接收实时传输事件")
-    public SseEmitter subscribe(@RequestParam String userId) {
+    public ResponseEntity<?> subscribe() {
+        if (!StpUtil.isLogin()) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Result.error(HttpStatus.UNAUTHORIZED.value(), "未登录", null));
+        }
+        String userId = StpUtil.getLoginIdAsString();
         log.info("User {} requesting SSE connection", userId);
-        return sseConnectionManager.createConnection(userId);
+        return ResponseEntity.ok()
+                .contentType(MediaType.TEXT_EVENT_STREAM)
+                .body(sseConnectionManager.createConnection(userId));
     }
 
     @PostMapping("/init")
@@ -203,6 +217,15 @@ public class FileTransferController {
             // 获取文件信息和文件流
             FileDownloadVO fileDownload = fileTransferTaskService.downloadFile(fileId);
 
+            operationLogService.recordSuccess(
+                    OperationType.DOWNLOAD,
+                    "下载文件",
+                    "FILE",
+                    fileId,
+                    fileDownload.getFileName(),
+                    "文件大小: " + FileUtils.formatFileSize(fileDownload.getFileSize())
+            );
+
             // 设置响应头
             HttpHeaders headers = new HttpHeaders();
             headers.add(HttpHeaders.CONTENT_DISPOSITION,
@@ -215,6 +238,47 @@ public class FileTransferController {
                     .body(fileDownload.getResource());
         } catch (Exception e) {
             throw new RuntimeException("文件下载失败", e);
+        }
+    }
+
+    @PostMapping("/folder-download/tasks/{folderId}")
+    @Operation(summary = "创建文件夹下载任务", description = "异步打包文件夹，并返回打包进度")
+    public Result<FolderDownloadTaskVO> createFolderDownloadTask(@PathVariable String folderId) {
+        FolderDownloadTaskVO result = fileTransferTaskService.createFolderDownloadTask(folderId);
+        return Result.ok(result, "文件夹下载任务已创建");
+    }
+
+    @GetMapping("/folder-download/tasks/{taskId}")
+    @Operation(summary = "查询文件夹下载任务进度", description = "查询文件夹打包进度")
+    public Result<FolderDownloadTaskVO> getFolderDownloadTask(@PathVariable String taskId) {
+        FolderDownloadTaskVO result = fileTransferTaskService.getFolderDownloadTask(taskId);
+        return Result.ok(result);
+    }
+
+    @DeleteMapping("/folder-download/tasks/{taskId}")
+    @Operation(summary = "取消文件夹下载打包任务", description = "取消正在进行的文件夹打包并清理临时文件")
+    public Result<Void> cancelFolderDownloadTask(@PathVariable String taskId) {
+        fileTransferTaskService.cancelFolderDownloadTask(taskId);
+        return Result.ok();
+    }
+
+    @GetMapping("/folder-download/tasks/{taskId}/file")
+    @Operation(summary = "下载文件夹压缩包", description = "下载已打包完成的文件夹 zip")
+    public ResponseEntity<Resource> downloadFolderTaskFile(@PathVariable String taskId) {
+        try {
+            FileDownloadVO fileDownload = fileTransferTaskService.downloadFolderTaskFile(taskId);
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.add(HttpHeaders.CONTENT_DISPOSITION,
+                    "attachment; filename=\"" + URLEncoder.encode(fileDownload.getFileName(), StandardCharsets.UTF_8) + "\"");
+            headers.add(HttpHeaders.CONTENT_TYPE, "application/zip");
+
+            return ResponseEntity.ok()
+                    .headers(headers)
+                    .contentLength(fileDownload.getFileSize())
+                    .body(fileDownload.getResource());
+        } catch (Exception e) {
+            throw new RuntimeException("文件夹下载失败", e);
         }
     }
 }

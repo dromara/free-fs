@@ -16,6 +16,10 @@
     <dependencies>
         <dependency>
             <groupId>com.xddcodec.fs</groupId>
+            <artifactId>fs-log</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.xddcodec.fs</groupId>
             <artifactId>fs-orm</artifactId>
         </dependency>
         <dependency>

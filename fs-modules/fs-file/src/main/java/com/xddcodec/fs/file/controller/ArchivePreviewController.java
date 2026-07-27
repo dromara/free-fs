@@ -1,7 +1,9 @@
 package com.xddcodec.fs.file.controller;
 
 import com.xddcodec.fs.file.preview.ArchiveFilePreviewService;
+import com.xddcodec.fs.file.service.FileInfoService;
 import com.xddcodec.fs.framework.common.constant.RedisKey;
+import com.xddcodec.fs.framework.common.context.WorkspaceContext;
 import com.xddcodec.fs.framework.common.domain.Result;
 import com.xddcodec.fs.framework.common.utils.I18nUtils;
 import com.xddcodec.fs.framework.redis.repository.RedisRepository;
@@ -23,6 +25,7 @@ import java.util.UUID;
 public class ArchivePreviewController {
 
     private final ArchiveFilePreviewService archiveFilePreviewService;
+    private final FileInfoService fileInfoService;
     private final RedisRepository redisRepository;
 
     /**
@@ -36,6 +39,8 @@ public class ArchivePreviewController {
             @PathVariable String archiveFileId,
             @RequestParam String innerPath) {
         
+        fileInfoService.getAuthorizedFile(archiveFileId);
+
         // 生成 token
         String token = UUID.randomUUID().toString().replace("-", "");
         
@@ -46,9 +51,14 @@ public class ArchivePreviewController {
                 cacheValue,
                 RedisKey.PREVIEW_TOKEN_EXPIRE
         );
-        
-        log.info("生成压缩包内文件预览 token: archiveFileId={}, innerPath={}, token={}", 
-                archiveFileId, innerPath, token);
+        redisRepository.setExpire(
+                RedisKey.getPreviewWorkspaceKey(token),
+                WorkspaceContext.getWorkspaceId(),
+                RedisKey.PREVIEW_TOKEN_EXPIRE
+        );
+
+        log.info("生成压缩包内文件预览 token: archiveFileId={}, innerPath={}",
+                archiveFileId, innerPath);
         
         return Result.ok(token);
     }
@@ -66,8 +76,8 @@ public class ArchivePreviewController {
             @RequestParam(required = false) String previewToken,
             Model model) {
         
-        log.info("预览压缩包内文件: archiveFileId={}, innerPath={}, token={}", 
-                archiveFileId, innerPath, previewToken);
+        log.info("预览压缩包内文件: archiveFileId={}, innerPath={}",
+                archiveFileId, innerPath);
         
         // 验证 token
         if (previewToken == null || previewToken.isBlank()) {

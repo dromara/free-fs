@@ -15,6 +15,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.http.MediaTypeFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
@@ -120,8 +121,8 @@ public class FileStreamController {
         final long contentLength = finalEnd - finalStart + 1;
 
         StreamingResponseBody stream = outputStream -> {
-            try (InputStream inputStream = storage.getFileStream(fileInfo.getObjectKey())) {
-                skipBytes(inputStream, finalStart);
+            try (InputStream inputStream = storage.downloadFileRange(
+                    fileInfo.getObjectKey(), finalStart, finalEnd)) {
                 copyStreamLimited(inputStream, outputStream, contentLength);
             } catch (IOException e) {
                 log.debug("Range流传输中断: {}", fileInfo.getDisplayName());
@@ -181,11 +182,8 @@ public class FileStreamController {
         String responseExtension = strategy.getResponseExtension(originalSuffix);
         String fileName = changeExtension(displayName, responseExtension);
 
-        if ("pdf".equalsIgnoreCase(responseExtension)) {
-            headers.setContentType(MediaType.APPLICATION_PDF);
-        } else {
-            headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
-        }
+        headers.setContentType(MediaTypeFactory.getMediaType(fileName)
+                .orElse(MediaType.APPLICATION_OCTET_STREAM));
 
         if (isRange || !strategy.needConvert()) {
             headers.setContentLength(sourceByteLength);
@@ -216,11 +214,8 @@ public class FileStreamController {
         String fileName = changeExtension(file.getDisplayName(), responseExtension);
 
         // 设置 Content-Type
-        if ("pdf".equalsIgnoreCase(responseExtension)) {
-            headers.setContentType(MediaType.APPLICATION_PDF);
-        } else {
-            headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
-        }
+        headers.setContentType(MediaTypeFactory.getMediaType(fileName)
+                .orElse(MediaType.APPLICATION_OCTET_STREAM));
 
         // 智能设置 Content-Length：转换流不设置长度，Range请求必须设置
         if (isRange || !strategy.needConvert()) {
@@ -239,21 +234,6 @@ public class FileStreamController {
         }
 
         return headers;
-    }
-
-    private void skipBytes(InputStream in, long skipCount) throws IOException {
-        if (skipCount <= 0) return;
-
-        long remaining = skipCount;
-        while (remaining > 0) {
-            long skipped = in.skip(remaining);
-            if (skipped == 0) {
-                if (in.read() == -1) throw new IOException("无法跳过指定字节数");
-                remaining--;
-            } else {
-                remaining -= skipped;
-            }
-        }
     }
 
     private void copyStream(InputStream in, OutputStream out) throws IOException {

@@ -31,6 +31,8 @@ CREATE TABLE "file_info" (
                              PRIMARY KEY ("id")
 );
 CREATE INDEX "idx_workspace_query" ON "file_info" ("workspace_id", "user_id", "is_deleted", "parent_id");
+CREATE INDEX "idx_file_content_dedup" ON "file_info" ("storage_platform_setting_id", "content_md5", "size", "is_dir");
+CREATE INDEX "idx_file_object_reference" ON "file_info" ("storage_platform_setting_id", "object_key");
 
 -- 2. file_share_access_record
 DROP TABLE IF EXISTS "file_share_access_record";
@@ -72,6 +74,53 @@ CREATE TABLE "file_shares" (
                                PRIMARY KEY ("id")
 );
 
+-- 4a. file_collections
+DROP TABLE IF EXISTS "file_collections";
+CREATE TABLE "file_collections" (
+                                      "id" varchar(128) NOT NULL,
+                                      "user_id" varchar(128) NOT NULL,
+                                      "workspace_id" varchar(128) NOT NULL,
+                                      "target_folder_id" varchar(128) NOT NULL,
+                                      "storage_platform_setting_id" varchar(128) DEFAULT NULL,
+                                      "collection_name" varchar(255) NOT NULL,
+                                      "description" varchar(1000) DEFAULT NULL,
+                                      "access_code_hash" varchar(255) DEFAULT NULL,
+                                      "expire_time" timestamp DEFAULT NULL,
+                                      "max_file_size" bigint NOT NULL DEFAULT 1073741824,
+                                      "allowed_extensions" varchar(1000) DEFAULT NULL,
+                                      "status" varchar(20) NOT NULL DEFAULT 'OPEN',
+                                      "submission_count" int NOT NULL DEFAULT 0,
+                                      "file_count" int NOT NULL DEFAULT 0,
+                                      "total_size" bigint NOT NULL DEFAULT 0,
+                                      "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                      "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                      PRIMARY KEY ("id")
+);
+CREATE INDEX "idx_collection_workspace_status" ON "file_collections" ("workspace_id", "status", "created_at");
+CREATE INDEX "idx_collection_target_folder" ON "file_collections" ("target_folder_id");
+CREATE INDEX "idx_collection_user" ON "file_collections" ("user_id");
+
+-- 4b. file_collection_submissions
+DROP TABLE IF EXISTS "file_collection_submissions";
+CREATE TABLE "file_collection_submissions" (
+                                                 "id" varchar(128) NOT NULL,
+                                                 "collection_id" varchar(128) NOT NULL,
+                                                 "submitter_name" varchar(64) NOT NULL,
+                                                 "submitter_ip" varchar(50) DEFAULT NULL,
+                                                 "user_agent" varchar(512) DEFAULT NULL,
+                                                 "folder_id" varchar(128) NOT NULL,
+                                                 "upload_token_hash" varchar(64) NOT NULL,
+                                                 "file_count" int NOT NULL DEFAULT 0,
+                                                 "total_size" bigint NOT NULL DEFAULT 0,
+                                                 "status" varchar(20) NOT NULL DEFAULT 'UPLOADING',
+                                                 "completed_at" timestamp DEFAULT NULL,
+                                                 "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                                 "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                                 PRIMARY KEY ("id")
+);
+CREATE INDEX "idx_submission_collection_time" ON "file_collection_submissions" ("collection_id", "created_at");
+CREATE INDEX "idx_submission_folder" ON "file_collection_submissions" ("folder_id");
+
 -- 5. file_transfer_task
 DROP TABLE IF EXISTS "file_transfer_task";
 CREATE TABLE "file_transfer_task" (
@@ -81,6 +130,8 @@ CREATE TABLE "file_transfer_task" (
                                       "parent_id" varchar(128) DEFAULT NULL,
                                       "user_id" varchar(128) NOT NULL,
                                       "workspace_id" varchar(128) NOT NULL,
+                                      "collection_id" varchar(128) DEFAULT NULL,
+                                      "collection_submission_id" varchar(128) DEFAULT NULL,
                                       "storage_platform_setting_id" varchar(255) DEFAULT NULL,
                                       "object_key" varchar(255) NOT NULL,
                                       "file_id" varchar(128) DEFAULT NULL,
@@ -102,6 +153,8 @@ CREATE TABLE "file_transfer_task" (
                                       "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
                                       CONSTRAINT "uk_task_id" UNIQUE ("task_id")
 );
+CREATE INDEX "idx_transfer_collection_submission" ON "file_transfer_task" ("collection_submission_id");
+CREATE INDEX "idx_transfer_collection" ON "file_transfer_task" ("collection_id");
 
 -- 6. file_user_favorites
 DROP TABLE IF EXISTS "file_user_favorites";
@@ -283,7 +336,8 @@ INSERT INTO "sys_permission" ("id", "permission_code", "permission_name", "modul
                                                                                                                                            (2, 'file:write', '文件编辑', '文件管理', '上传、创建文件夹、删除、移动、重命名、收藏、回收站操作', 2, '2026-04-01 02:44:26', '2026-04-01 02:44:26'),
                                                                                                                                            (3, 'file:share', '文件分享', '文件管理', '创建、管理、取消分享链接', 3, '2026-04-01 02:44:26', '2026-04-01 02:44:26'),
                                                                                                                                            (4, 'storage:manage', '存储管理', '存储管理', '存储源的增删改查及启用禁用', 4, '2026-04-01 02:44:26', '2026-04-01 02:44:26'),
-                                                                                                                                           (5, 'member:manage', '成员管理', '系统管理', '邀请/移除成员、角色管理、权限查看', 5, '2026-04-01 02:44:26', '2026-04-01 02:44:26');
+                                                                                                                                           (5, 'member:manage', '成员管理', '系统管理', '邀请/移除成员、角色管理、权限查看', 5, '2026-04-01 02:44:26', '2026-04-01 02:44:26'),
+                                                                                                                                           (6, 'log:read', '查看操作日志', '系统管理', '查看当前工作空间的文件、分享、成员、角色和存储操作记录', 6, '2026-07-22 00:00:00', '2026-07-22 00:00:00');
 
 -- 用户
 INSERT INTO "sys_user" ("id", "username", "password", "email", "nickname", "avatar", "status", "created_at", "updated_at", "last_login_at")
@@ -303,7 +357,8 @@ INSERT INTO "sys_role" ("id", "workspace_id", "role_code", "role_name", "descrip
 INSERT INTO "sys_role_permission" ("id", "role_id", "role_code", "permission_code") VALUES
                                                                                         (49, 100015, 'admin', 'file:read'), (50, 100015, 'admin', 'file:write'), (51, 100015, 'admin', 'file:share'),
                                                                                         (52, 100015, 'admin', 'storage:manage'), (53, 100015, 'admin', 'member:manage'), (54, 100016, 'member', 'file:read'),
-                                                                                        (55, 100016, 'member', 'file:write'), (56, 100016, 'member', 'file:share'), (57, 100017, 'viewer', 'file:read');
+                                                                                        (55, 100016, 'member', 'file:write'), (56, 100016, 'member', 'file:share'), (57, 100017, 'viewer', 'file:read'),
+                                                                                        (58, 100015, 'admin', 'log:read');
 
 -- 工作空间成员
 INSERT INTO "sys_workspace_member" ("id", "workspace_id", "user_id", "role_id", "joined_at", "updated_at")
@@ -312,6 +367,29 @@ VALUES (8, '01kpq1bqzq1z99r0vd2xxqr3yk', '01jrvgs943q0f43h0aa5mjde0y', 100015, '
 -- 用户传输设置
 INSERT INTO "sys_user_transfer_setting" ("id", "user_id", "download_location", "is_default_download_location", "download_speed_limit", "concurrent_upload_quantity", "concurrent_download_quantity", "chunk_size", "created_at", "updated_at")
 VALUES (1, '01jrvgs943q0f43h0aa5mjde0y', 'C:\Users\insentek\Downloads', 1, -1, 3, 3, 5242880, '2025-11-11 14:45:27', '2026-04-03 11:19:24');
+
+-- 重置序列
+DROP TABLE IF EXISTS "sys_operation_log";
+CREATE TABLE "sys_operation_log" (
+  "id" bigserial PRIMARY KEY,
+  "operator_id" varchar(128) DEFAULT NULL,
+  "operator_name" varchar(128) DEFAULT NULL,
+  "workspace_id" varchar(128) DEFAULT NULL,
+  "operation_type" varchar(64) NOT NULL,
+  "operation_name" varchar(128) NOT NULL,
+  "target_type" varchar(32) DEFAULT NULL,
+  "target_id" varchar(128) DEFAULT NULL,
+  "target_name" varchar(255) DEFAULT NULL,
+  "detail" text DEFAULT NULL,
+  "operation_ip" varchar(50) DEFAULT NULL,
+  "user_agent" varchar(512) DEFAULT NULL,
+  "status" smallint NOT NULL DEFAULT 0,
+  "error_message" varchar(512) DEFAULT NULL,
+  "operation_time" timestamp NOT NULL
+);
+CREATE INDEX "idx_operation_workspace_time" ON "sys_operation_log" ("workspace_id", "operation_time");
+CREATE INDEX "idx_operation_operator_time" ON "sys_operation_log" ("operator_id", "operation_time");
+CREATE INDEX "idx_operation_type_time" ON "sys_operation_log" ("operation_type", "operation_time");
 
 -- 重置序列
 SELECT setval('sys_permission_id_seq', (SELECT MAX(id) FROM sys_permission));

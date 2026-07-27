@@ -7,6 +7,7 @@ import cn.hutool.core.util.StrUtil;
 import com.mybatisflex.core.paginate.Page;
 import com.mybatisflex.core.util.UpdateEntity;
 import com.xddcodec.fs.file.domain.FileInfo;
+import com.xddcodec.fs.file.domain.dto.CopyFileCmd;
 import com.xddcodec.fs.file.domain.dto.CreateDirectoryCmd;
 import com.xddcodec.fs.file.domain.dto.MoveFileCmd;
 import com.xddcodec.fs.file.domain.dto.RenameFileCmd;
@@ -17,7 +18,6 @@ import com.xddcodec.fs.file.domain.vo.FileDetailVO;
 import com.xddcodec.fs.file.domain.vo.FileVO;
 import com.xddcodec.fs.file.mapper.FileInfoMapper;
 import com.xddcodec.fs.file.service.FileInfoService;
-import com.xddcodec.fs.framework.common.constant.CommonConstant;
 import com.xddcodec.fs.framework.common.domain.PageResult;
 import com.xddcodec.fs.framework.common.enums.FileTypeEnum;
 import com.xddcodec.fs.framework.common.context.WorkspaceContext;
@@ -63,15 +63,28 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
     private StorageServiceFacade storageServiceFacade;
 
     @Override
-    public InputStream downloadFile(String fileId) {
-        FileInfo fileInfo = getById(fileId);
-        if (fileInfo == null) {
-            throw new StorageOperationException(I18nUtils.getMessage("file.not.exist", new Object[]{fileId}));
+    public FileInfo getAuthorizedFile(String fileId) {
+        String workspaceId = WorkspaceContext.getWorkspaceId();
+        if (StrUtil.isBlank(workspaceId) || StrUtil.isBlank(fileId)) {
+            throw new BusinessException(I18nUtils.getMessage("file.not.found"));
         }
-        if (CommonConstant.Y.equals(fileInfo.getIsDir())) {
+        FileInfo fileInfo = getOne(new QueryWrapper()
+                .where(FILE_INFO.ID.eq(fileId))
+                .and(FILE_INFO.WORKSPACE_ID.eq(workspaceId))
+                .and(FILE_INFO.IS_DELETED.eq(false)));
+        if (fileInfo == null) {
+            throw new BusinessException(I18nUtils.getMessage("file.not.found"));
+        }
+        return fileInfo;
+    }
+
+    @Override
+    public InputStream downloadFile(String fileId) {
+        FileInfo fileInfo = getAuthorizedFile(fileId);
+        if (fileInfo.getIsDir()) {
             throw new StorageOperationException(I18nUtils.getMessage("file.cannot.download.dir", new Object[]{fileId}));
         }
-        if (CommonConstant.Y.equals(fileInfo.getIsDeleted())) {
+        if (fileInfo.getIsDeleted()) {
             throw new StorageOperationException(I18nUtils.getMessage("file.deleted", new Object[]{fileId}));
         }
 
@@ -88,14 +101,11 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
 
     @Override
     public String getFileUrl(String fileId, Integer expireSeconds) {
-        FileInfo fileInfo = getById(fileId);
-        if (fileInfo == null) {
-            throw new StorageOperationException(I18nUtils.getMessage("file.not.exist", new Object[]{fileId}));
-        }
-        if (CommonConstant.Y.equals(fileInfo.getIsDir())) {
+        FileInfo fileInfo = getAuthorizedFile(fileId);
+        if (fileInfo.getIsDir()) {
             throw new StorageOperationException(I18nUtils.getMessage("file.dir.no.url", new Object[]{fileId}));
         }
-        if (CommonConstant.Y.equals(fileInfo.getIsDeleted())) {
+        if (fileInfo.getIsDeleted()) {
             throw new StorageOperationException(I18nUtils.getMessage("file.deleted", new Object[]{fileId}));
         }
         IStorageOperationService storageService = storageServiceFacade.getStorageService(fileInfo.getStoragePlatformSettingId());
@@ -112,7 +122,10 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
             return;
         }
 
-        List<FileInfo> fileInfoList = listByIds(fileIds);
+        String workspaceId = WorkspaceContext.getWorkspaceId();
+        List<FileInfo> fileInfoList = list(new QueryWrapper()
+                .where(FILE_INFO.ID.in(fileIds))
+                .and(FILE_INFO.WORKSPACE_ID.eq(workspaceId)));
         if (fileInfoList.isEmpty()) {
             return;
         }
@@ -122,12 +135,12 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
         LocalDateTime now = LocalDateTime.now();
 
         for (FileInfo fileInfo : fileInfoList) {
-            if (!CommonConstant.Y.equals(fileInfo.getIsDeleted())) {
+            if (!fileInfo.getIsDeleted()) {
                 toDeleteList.add(fileInfo);
 
                 // 如果是文件夹，递归获取所有子文件和子文件夹
-                if (CommonConstant.Y.equals(fileInfo.getIsDir())) {
-                    List<FileInfo> children = getAllChildrenRecursively(fileInfo.getId(), false);
+                if (fileInfo.getIsDir()) {
+                    List<FileInfo> children = getAllChildrenRecursively(fileInfo.getId(), workspaceId, false);
                     toDeleteList.addAll(children);
                 }
             }
@@ -139,7 +152,7 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
 
         // 批量标记为删除
         toDeleteList.forEach(fileInfo -> {
-            fileInfo.setIsDeleted(CommonConstant.Y);
+            fileInfo.setIsDeleted(true);
             fileInfo.setDeletedTime(now);
         });
 
@@ -154,15 +167,16 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
      * @param includeDeleted 是否包含已删除的文件
      * @return 所有子文件列表
      */
-    private List<FileInfo> getAllChildrenRecursively(String parentId, boolean includeDeleted) {
+    private List<FileInfo> getAllChildrenRecursively(String parentId, String workspaceId, boolean includeDeleted) {
         List<FileInfo> allChildren = new ArrayList<>();
 
         // 查询直接子文件
         QueryWrapper query = new QueryWrapper()
-                .where(FILE_INFO.PARENT_ID.eq(parentId));
+                .where(FILE_INFO.PARENT_ID.eq(parentId))
+                .and(FILE_INFO.WORKSPACE_ID.eq(workspaceId));
 
         if (!includeDeleted) {
-            query.and(FILE_INFO.IS_DELETED.eq(CommonConstant.N));
+            query.and(FILE_INFO.IS_DELETED.eq(false));
         }
 
         List<FileInfo> directChildren = list(query);
@@ -171,8 +185,8 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
             allChildren.add(child);
 
             // 如果是文件夹，递归查询
-            if (CommonConstant.Y.equals(child.getIsDir())) {
-                allChildren.addAll(getAllChildrenRecursively(child.getId(), includeDeleted));
+            if (child.getIsDir()) {
+                allChildren.addAll(getAllChildrenRecursively(child.getId(), workspaceId, includeDeleted));
             }
         }
 
@@ -187,12 +201,18 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
         String userId = StpUtil.getLoginIdAsString();
         String workspaceId = WorkspaceContext.getWorkspaceId();
         String platformConfigId = StoragePlatformContextHolder.getConfigId();
+        if (StrUtil.isNotBlank(cmd.getParentId())) {
+            FileInfo parent = getAuthorizedFile(cmd.getParentId());
+            if (!Boolean.TRUE.equals(parent.getIsDir())) {
+                throw new BusinessException(I18nUtils.getMessage("file.target.dir.invalid"));
+            }
+        }
         String baseName = cmd.getFolderName().trim();
         String finalName = generateUniqueName(
                 workspaceId,
                 cmd.getParentId(),
                 baseName,
-                CommonConstant.Y,
+                true,
                 null,
                 platformConfigId
         );
@@ -200,7 +220,7 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
         dirInfo.setId(folderId);
         dirInfo.setOriginalName(finalName);
         dirInfo.setDisplayName(finalName);
-        dirInfo.setIsDir(CommonConstant.Y);
+        dirInfo.setIsDir(true);
         dirInfo.setParentId(cmd.getParentId());
         dirInfo.setWorkspaceId(workspaceId);
         dirInfo.setUserId(userId);
@@ -208,7 +228,7 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
         LocalDateTime now = LocalDateTime.now();
         dirInfo.setUploadTime(now);
         dirInfo.setUpdateTime(now);
-        dirInfo.setIsDeleted(CommonConstant.N);
+        dirInfo.setIsDeleted(false);
         save(dirInfo);
         return dirInfo;
     }
@@ -216,10 +236,7 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void renameFile(String fileId, RenameFileCmd cmd) {
-        FileInfo fileInfo = getById(fileId);
-        if (fileInfo == null) {
-            throw new StorageOperationException(I18nUtils.getMessage("file.not.exist", new Object[]{fileId}));
-        }
+        FileInfo fileInfo = getAuthorizedFile(fileId);
         if (fileInfo.getDisplayName().equals(cmd.getDisplayName())) {
             return;
         }
@@ -248,15 +265,19 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
         }
 
         String targetDirId = StringUtils.isBlank(cmd.getDirId()) ? null : cmd.getDirId();
+        String workspaceId = WorkspaceContext.getWorkspaceId();
 
         if (targetDirId != null) {
-            FileInfo dirInfo = getById(targetDirId);
-            if (dirInfo == null || !CommonConstant.Y.equals(dirInfo.getIsDir())) {
+            FileInfo dirInfo = getAuthorizedFile(targetDirId);
+            if (dirInfo == null || !dirInfo.getIsDir()) {
                 throw new BusinessException(I18nUtils.getMessage("file.target.dir.invalid"));
             }
         }
 
-        List<FileInfo> fileInfos = listByIds(cmd.getFileIds());
+        List<FileInfo> fileInfos = list(new QueryWrapper()
+                .where(FILE_INFO.ID.in(cmd.getFileIds()))
+                .and(FILE_INFO.WORKSPACE_ID.eq(workspaceId))
+                .and(FILE_INFO.IS_DELETED.eq(false)));
         List<FileInfo> updateList = new ArrayList<>();
 
         for (FileInfo fileInfo : fileInfos) {
@@ -264,8 +285,8 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
                 continue;
             }
 
-            if (targetDirId != null && CommonConstant.Y.equals(fileInfo.getIsDir())) {
-                if (fileInfo.getId().equals(targetDirId) || isSubDirectory(fileInfo.getId(), targetDirId)) {
+            if (targetDirId != null && fileInfo.getIsDir()) {
+                if (fileInfo.getId().equals(targetDirId) || isSubDirectory(fileInfo.getId(), targetDirId, workspaceId)) {
                     throw new BusinessException(I18nUtils.getMessage("file.cannot.move.to.self", 
                             new Object[]{fileInfo.getDisplayName()}));
                 }
@@ -292,14 +313,144 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
         }
     }
 
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public List<FileInfo> copyFiles(CopyFileCmd cmd) {
+        if (CollUtil.isEmpty(cmd.getFileIds())) {
+            throw new BusinessException(I18nUtils.getMessage("file.id.list.empty"));
+        }
+
+        String workspaceId = WorkspaceContext.getWorkspaceId();
+        String userId = StpUtil.getLoginIdAsString();
+        String targetDirId = StringUtils.isBlank(cmd.getDirId()) ? null : cmd.getDirId();
+        String targetStorageId = StoragePlatformContextHolder.getConfigId();
+
+        if (targetDirId != null) {
+            FileInfo targetDir = getAuthorizedFile(targetDirId);
+            if (!Boolean.TRUE.equals(targetDir.getIsDir())) {
+                throw new BusinessException(I18nUtils.getMessage("file.target.dir.invalid"));
+            }
+            targetStorageId = targetDir.getStoragePlatformSettingId();
+        }
+
+        List<String> requestedIds = cmd.getFileIds().stream().distinct().toList();
+        List<FileInfo> sourceFiles = list(new QueryWrapper()
+                .where(FILE_INFO.ID.in(requestedIds))
+                .and(FILE_INFO.WORKSPACE_ID.eq(workspaceId))
+                .and(FILE_INFO.IS_DELETED.eq(false)));
+        Map<String, FileInfo> sourceMap = sourceFiles.stream()
+                .collect(Collectors.toMap(FileInfo::getId, file -> file));
+
+        if (sourceMap.size() != requestedIds.size()) {
+            throw new BusinessException(I18nUtils.getMessage("file.not.found"));
+        }
+
+        List<FileInfo> copiedTopLevelFiles = new ArrayList<>();
+        for (String sourceId : requestedIds) {
+            FileInfo source = sourceMap.get(sourceId);
+            if (!sameStorage(source.getStoragePlatformSettingId(), targetStorageId)) {
+                throw new BusinessException(I18nUtils.getMessage("file.cannot.copy.across.storage"));
+            }
+            if (targetDirId != null && Boolean.TRUE.equals(source.getIsDir())
+                    && (source.getId().equals(targetDirId)
+                    || isSubDirectory(source.getId(), targetDirId, workspaceId))) {
+                throw new BusinessException(I18nUtils.getMessage(
+                        "file.cannot.copy.to.self", new Object[]{source.getDisplayName()}));
+            }
+
+            String topLevelName = generateUniqueName(
+                    workspaceId,
+                    targetDirId,
+                    source.getDisplayName(),
+                    source.getIsDir(),
+                    null,
+                    targetStorageId
+            );
+            LocalDateTime now = LocalDateTime.now();
+            List<FileInfo> copies = new ArrayList<>();
+            FileInfo topLevelCopy = cloneFileInfo(source, targetDirId, topLevelName, userId, now);
+            copies.add(topLevelCopy);
+            if (Boolean.TRUE.equals(source.getIsDir())) {
+                cloneDirectoryChildren(source.getId(), topLevelCopy.getId(), workspaceId, userId, now, copies);
+            }
+
+            // 每个顶层项目单独批量落库，让下一项的重名检测能够看到前一项。
+            this.saveBatch(copies);
+            copiedTopLevelFiles.add(topLevelCopy);
+        }
+        return copiedTopLevelFiles;
+    }
+
+    private void cloneDirectoryChildren(String sourceParentId,
+                                        String targetParentId,
+                                        String workspaceId,
+                                        String userId,
+                                        LocalDateTime now,
+                                        List<FileInfo> copies) {
+        List<FileInfo> children = list(new QueryWrapper()
+                .where(FILE_INFO.PARENT_ID.eq(sourceParentId))
+                .and(FILE_INFO.WORKSPACE_ID.eq(workspaceId))
+                .and(FILE_INFO.IS_DELETED.eq(false))
+                .orderBy(FILE_INFO.IS_DIR.desc(), FILE_INFO.UPLOAD_TIME.asc()));
+
+        for (FileInfo child : children) {
+            FileInfo childCopy = cloneFileInfo(
+                    child,
+                    targetParentId,
+                    child.getDisplayName(),
+                    userId,
+                    now
+            );
+            copies.add(childCopy);
+            if (Boolean.TRUE.equals(child.getIsDir())) {
+                cloneDirectoryChildren(child.getId(), childCopy.getId(), workspaceId, userId, now, copies);
+            }
+        }
+    }
+
+    private FileInfo cloneFileInfo(FileInfo source,
+                                   String parentId,
+                                   String displayName,
+                                   String userId,
+                                   LocalDateTime now) {
+        FileInfo copy = new FileInfo();
+        copy.setId(IdUtil.fastSimpleUUID());
+        copy.setObjectKey(source.getObjectKey());
+        copy.setOriginalName(source.getOriginalName());
+        copy.setDisplayName(displayName);
+        copy.setSuffix(source.getSuffix());
+        copy.setSize(source.getSize());
+        copy.setMimeType(source.getMimeType());
+        copy.setIsDir(source.getIsDir());
+        copy.setParentId(parentId);
+        copy.setWorkspaceId(source.getWorkspaceId());
+        copy.setUserId(userId);
+        copy.setContentMd5(source.getContentMd5());
+        copy.setStoragePlatformSettingId(source.getStoragePlatformSettingId());
+        copy.setUploadTime(now);
+        copy.setUpdateTime(now);
+        copy.setLastAccessTime(null);
+        copy.setIsDeleted(false);
+        copy.setDeletedTime(null);
+        return copy;
+    }
+
+    private boolean sameStorage(String left, String right) {
+        return Objects.equals(StrUtil.blankToDefault(left, ""), StrUtil.blankToDefault(right, ""));
+    }
+
     // 检查target Id是否是source Id的子目录
-    private boolean isSubDirectory(String sourceId, String targetId) {
-        FileInfo current = getById(targetId);
+    private boolean isSubDirectory(String sourceId, String targetId, String workspaceId) {
+        FileInfo current = getOne(new QueryWrapper()
+                .where(FILE_INFO.ID.eq(targetId))
+                .and(FILE_INFO.WORKSPACE_ID.eq(workspaceId)));
         while (current != null && current.getParentId() != null) {
             if (current.getParentId().equals(sourceId)) {
                 return true;
             }
-            current = getById(current.getParentId());
+            current = getOne(new QueryWrapper()
+                    .where(FILE_INFO.ID.eq(current.getParentId()))
+                    .and(FILE_INFO.WORKSPACE_ID.eq(workspaceId)));
         }
         return false;
     }
@@ -319,12 +470,12 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
      */
     @Override
     public String generateUniqueName(String workspaceId, String parentId,
-                                     String desiredName, Integer isDir,
+                                     String desiredName, Boolean isDir,
                                      String excludeFileId, String storagePlatformSettingId) {
 
         String nameWithoutExt = desiredName;
         String extension = "";
-        if (!CommonConstant.Y.equals(isDir) && desiredName.contains(".")) {
+        if (!isDir && desiredName.contains(".")) {
             int lastDotIndex = desiredName.lastIndexOf(".");
             nameWithoutExt = desiredName.substring(0, lastDotIndex);
             extension = desiredName.substring(lastDotIndex);
@@ -356,13 +507,13 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
      * 构建查询同级目录下同类型文件的条件
      */
     private QueryWrapper buildSameLevelQuery(String workspaceId, String parentId,
-                                             String baseName, Integer isDir,
+                                             String baseName, Boolean isDir,
                                              String excludeFileId, String storagePlatformSettingId) {
         QueryWrapper query = new QueryWrapper();
 
         query.where(FILE_INFO.WORKSPACE_ID.eq(workspaceId))
                 .and(FILE_INFO.IS_DIR.eq(isDir))
-                .and(FILE_INFO.IS_DELETED.eq(CommonConstant.N));
+                .and(FILE_INFO.IS_DELETED.eq(false));
 
         if (StrUtil.isBlank(parentId)) {
             query.and(FILE_INFO.PARENT_ID.isNull());
@@ -395,13 +546,13 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
      */
     private Set<Integer> extractUsedSuffixes(List<FileInfo> existingFiles,
                                              String nameWithoutExt,
-                                             Integer isDir) {
+                                             Boolean isDir) {
         return existingFiles.stream()
                 .map(f -> {
                     String displayName = f.getDisplayName();
 
                     // 移除扩展名（如果是文件）
-                    if (!CommonConstant.Y.equals(isDir) && displayName.contains(".")) {
+                    if (!isDir && displayName.contains(".")) {
                         int lastDotIndex = displayName.lastIndexOf(".");
                         displayName = displayName.substring(0, lastDotIndex);
                     }
@@ -435,8 +586,8 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
      * @return 完整的文件名
      */
     private String buildNameWithSuffix(String nameWithoutExt, int suffixNum,
-                                       String extension, Integer isDir) {
-        if (CommonConstant.Y.equals(isDir)) {
+                                       String extension, Boolean isDir) {
+        if (isDir) {
             // 文件夹：baseName(1)
             return nameWithoutExt + "(" + suffixNum + ")";
         } else {
@@ -447,10 +598,8 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
 
     @Override
     public List<FileVO> getDirectoryTreePath(String dirId) {
-        FileInfo fileInfo = getById(dirId);
-        if (fileInfo == null) {
-            return List.of();
-        }
+        String workspaceId = WorkspaceContext.getWorkspaceId();
+        FileInfo fileInfo = getAuthorizedFile(dirId);
 
         List<FileVO> pathList = new ArrayList<>();
         FileInfo current = fileInfo;
@@ -462,7 +611,10 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
 
             // 查找父节点
             if (current.getParentId() != null) {
-                current = getById(current.getParentId());
+                current = getOne(new QueryWrapper()
+                        .where(FILE_INFO.ID.eq(current.getParentId()))
+                        .and(FILE_INFO.WORKSPACE_ID.eq(workspaceId))
+                        .and(FILE_INFO.IS_DELETED.eq(false)));
             } else {
                 break;
             }
@@ -491,7 +643,7 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
                 .on(FILE_INFO.ID.eq(FILE_USER_FAVORITES.FILE_ID)
                         .and(FILE_USER_FAVORITES.USER_ID.eq(userId)))
                 .where(FILE_INFO.WORKSPACE_ID.eq(workspaceId))
-                .and(FILE_INFO.IS_DELETED.eq(CommonConstant.N));
+                .and(FILE_INFO.IS_DELETED.eq(false));
         // 存储平台过滤
         if (StringUtils.isEmpty(storagePlatformSettingId)) {
             wrapper.and(FILE_INFO.STORAGE_PLATFORM_SETTING_ID.isNull());
@@ -500,7 +652,7 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
         }
         // 最近使用视图 (Recents)
         if (Boolean.TRUE.equals(qry.getIsRecents())) {
-            wrapper.and(FILE_INFO.IS_DIR.eq(CommonConstant.N))
+            wrapper.and(FILE_INFO.IS_DIR.eq(false))
                     .orderBy(FILE_INFO.LAST_ACCESS_TIME.desc());
             // 最近使用通常不需要分页，只需要前 N 条，或者也可以直接分页查询第一页
             pageParam.setPageSize(20);
@@ -511,16 +663,17 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
             }
 
             // 目录/文件视图过滤
-            if (CommonConstant.Y.equals(qry.getIsDir())) {
-                wrapper.and(FILE_INFO.IS_DIR.eq(CommonConstant.Y));
+            if (Boolean.TRUE.equals(qry.getIsDir())) {
+                wrapper.and(FILE_INFO.IS_DIR.eq(true));
             }
 
             // 父目录逻辑：判断是否是特殊筛选视图
             boolean isTypeFilter = StrUtil.isNotBlank(qry.getFileType());
             boolean isFavoriteView = Boolean.TRUE.equals(qry.getIsFavorite()) && qry.getParentId() == null;
-            boolean isDirFilter = CommonConstant.Y.equals(qry.getIsDir()) && qry.getParentId() == null;
+            boolean isDirFilter = Boolean.TRUE.equals(qry.getIsDir()) && qry.getParentId() == null;
+            boolean isWorkspaceSearch = StrUtil.isNotBlank(qry.getKeyword()) && qry.getParentId() == null;
 
-            if (!isTypeFilter && !isFavoriteView && !isDirFilter) {
+            if (!isTypeFilter && !isFavoriteView && !isDirFilter && !isWorkspaceSearch) {
                 if (qry.getParentId() == null) {
                     wrapper.and(FILE_INFO.PARENT_ID.isNull());
                 } else {
@@ -538,15 +691,28 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
             applyFileTypeFilter(wrapper, qry);
 
             // 排序逻辑
-            String orderByField = StrUtil.toUnderlineCase(qry.getOrderBy());
+            String orderByField = switch (String.valueOf(qry.getOrderBy())) {
+                case "displayName" -> "display_name";
+                case "suffix" -> "suffix";
+                case "size" -> "size";
+                default -> "update_time";
+            };
             boolean isAsc = "ASC".equalsIgnoreCase(qry.getOrderDirection());
 
-            wrapper.orderBy(FILE_INFO.IS_DIR.desc())
-                    .orderBy(FILE_INFO.UPDATE_TIME.desc());
-
-            if (StrUtil.isNotBlank(orderByField)) {
+            wrapper.orderBy(FILE_INFO.IS_DIR.desc());
+            if ("display_name".equals(orderByField)) {
+                // 逐段按数值比较名称中的数字，避免 1、10、2，以及 2 (1)、2 (10)、2 (2)。
+                wrapper.orderBy("CASE WHEN display_name REGEXP '[0-9]' THEN 0 ELSE 1 END", isAsc)
+                        .orderBy("LOWER(REGEXP_SUBSTR(display_name, '^[^0-9]*'))", isAsc)
+                        .orderBy("CAST(REGEXP_SUBSTR(display_name, '[0-9]+', 1, 1) AS UNSIGNED)", isAsc)
+                        .orderBy("CAST(REGEXP_SUBSTR(display_name, '[0-9]+', 1, 2) AS UNSIGNED)", isAsc)
+                        .orderBy("CAST(REGEXP_SUBSTR(display_name, '[0-9]+', 1, 3) AS UNSIGNED)", isAsc)
+                        .orderBy("LOWER(display_name)", isAsc);
+            } else {
                 wrapper.orderBy(orderByField, isAsc);
             }
+            // 保证分页排序稳定，避免排序字段相同时跨页重复或遗漏。
+            wrapper.orderBy(FILE_INFO.ID.asc());
         }
 
         // 执行分页查询 (使用 listAs 直接映射到 VO)
@@ -555,7 +721,7 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
         // 异步补充缩略图 (这里用 parallelStream 没问题，或者在转换后处理)
         if (CollUtil.isNotEmpty(resultPage.getRecords())) {
             resultPage.getRecords().parallelStream().forEach(vo ->
-                    vo.setThumbnailUrl(fillThumbnailUrl(vo.getSuffix(), vo.getObjectKey()))
+                    vo.setThumbnailUrl(fillThumbnailUrl(vo.getId(), vo.getSuffix()))
             );
         }
 
@@ -565,15 +731,13 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
     /**
      * 填充图片封面链接
      */
-    private String fillThumbnailUrl(String suffix, String objectKey) {
+    private String fillThumbnailUrl(String fileId, String suffix) {
         // 如果非图片文件跳过
         if (!FileTypeEnum.isImageFile(suffix)) {
             return null;
         }
-        String storagePlatformSettingId = StoragePlatformContextHolder.getConfigId();
-        IStorageOperationService storageService = storageServiceFacade.getStorageService(storagePlatformSettingId);
-
-        return storageService.getFileUrl(objectKey, 3600);
+        // 统一走同源文件流，避免把 minio/rustfs 等 Docker 内部地址返回给浏览器。
+        return "/api/file/stream/preview/" + fileId;
     }
 
     @Override
@@ -584,8 +748,8 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
         List<FileInfo> fileInfoList = this.list(new QueryWrapper()
                 .where(FILE_INFO.WORKSPACE_ID.eq(workspaceId)
                         .and(FILE_INFO.STORAGE_PLATFORM_SETTING_ID.eq(storagePlatformSettingId))
-                        .and(FILE_INFO.IS_DELETED.eq(CommonConstant.N))
-                        .and(FILE_INFO.IS_DIR.eq(CommonConstant.N))
+                        .and(FILE_INFO.IS_DELETED.eq(false))
+                        .and(FILE_INFO.IS_DIR.eq(false))
                 ));
 
         // 统计总大小
@@ -598,12 +762,9 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
 
     @Override
     public FileDetailVO getFileDetails(String fileId) {
-        FileInfo fileInfo = getById(fileId);
-        if (fileInfo == null) {
-            throw new BusinessException(I18nUtils.getMessage("file.not.found"));
-        }
+        FileInfo fileInfo = getAuthorizedFile(fileId);
         FileDetailVO vo = converter.convert(fileInfo, FileDetailVO.class);
-        if (CommonConstant.Y.equals(vo.getIsDir())) {
+        if (vo.getIsDir()) {
             Map<String, Long> stats = new HashMap<>();
             stats.put("size", 0L);
             stats.getOrDefault("fileCount", 0L);
@@ -618,7 +779,7 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
         } else {
             vo.setIncludeFiles(0);
             vo.setIncludeFolders(0);
-            vo.setThumbnailUrl(fillThumbnailUrl(vo.getSuffix(), fileInfo.getObjectKey()));
+            vo.setThumbnailUrl(fillThumbnailUrl(fileInfo.getId(), vo.getSuffix()));
         }
         return vo;
     }
@@ -633,14 +794,14 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
                 .where(FILE_INFO.PARENT_ID.eq(parentId))
                 .and(FILE_INFO.WORKSPACE_ID.eq(workspaceId))
                 .and(FILE_INFO.STORAGE_PLATFORM_SETTING_ID.eq(storagePlatformSettingId))
-                .and(FILE_INFO.IS_DELETED.eq(CommonConstant.N)));
+                .and(FILE_INFO.IS_DELETED.eq(false)));
 
         if (CollUtil.isEmpty(children)) {
             return;
         }
 
         for (FileInfo child : children) {
-            if (CommonConstant.Y.equals(child.getIsDir())) {
+            if (child.getIsDir()) {
                 // 统计文件夹个数并向下递归
                 stats.put("folderCount", stats.get("folderCount") + 1);
                 recursiveAccumulate(child.getId(), stats);
@@ -660,8 +821,8 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
         QueryWrapper wrapper = new QueryWrapper();
         wrapper.where(FILE_INFO.WORKSPACE_ID.eq(workspaceId)
                 .and(FILE_INFO.STORAGE_PLATFORM_SETTING_ID.eq(storagePlatformSettingId))
-                .and(FILE_INFO.IS_DELETED.eq(CommonConstant.N))
-                .and(FILE_INFO.IS_DIR.eq(CommonConstant.Y))
+                .and(FILE_INFO.IS_DELETED.eq(false))
+                .and(FILE_INFO.IS_DIR.eq(true))
         );
 
         if (StrUtil.isNotBlank(parentId)) {
@@ -678,7 +839,9 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
         if (CollUtil.isEmpty(fileIds)) {
             return List.of();
         }
-        List<FileInfo> fileInfos = this.list(new QueryWrapper().where(FILE_INFO.ID.in(fileIds)));
+        List<FileInfo> fileInfos = this.list(new QueryWrapper()
+                .where(FILE_INFO.ID.in(fileIds))
+                .and(FILE_INFO.IS_DELETED.eq(false)));
         return converter.convert(fileInfos, FileVO.class);
     }
 
@@ -714,7 +877,7 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
             // OTHER 分类：匹配 OTHER 分类的已知后缀 + 所有未知后缀
             List<String> allOtherKnownSuffixes = FileTypeEnum.getAllKnownSuffixesExcluding(FileTypeEnum.FileCategory.OTHER);
 
-            wrapper.and(FILE_INFO.IS_DIR.eq(CommonConstant.N))
+            wrapper.and(FILE_INFO.IS_DIR.eq(false))
                     .and(
                             FILE_INFO.SUFFIX.in(categorySuffixes) // zip、rar 等
                                     .or(FILE_INFO.SUFFIX.notIn(allOtherKnownSuffixes)) // 真正的未知类型
@@ -723,7 +886,7 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
         } else {
             // 常规分类：直接匹配后缀
             if (!categorySuffixes.isEmpty()) {
-                wrapper.and(FILE_INFO.IS_DIR.eq(CommonConstant.N))
+                wrapper.and(FILE_INFO.IS_DIR.eq(false))
                         .and(FILE_INFO.SUFFIX.in(categorySuffixes));
             }
         }
@@ -736,7 +899,7 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
         if (fileType.isOther()) {
             // 其他类型：排除所有已知后缀
             List<String> knownSuffixes = FileTypeEnum.getAllKnownSuffixes();
-            wrapper.and(FILE_INFO.IS_DIR.eq(CommonConstant.N))
+            wrapper.and(FILE_INFO.IS_DIR.eq(false))
                     .and(
                             FILE_INFO.SUFFIX.notIn(knownSuffixes)
                                     .or(FILE_INFO.SUFFIX.isNull().or(FILE_INFO.SUFFIX.eq("")))
@@ -745,7 +908,7 @@ public class FileInfoServiceImpl extends ServiceImpl<FileInfoMapper, FileInfo> i
             // 具体类型：直接匹配后缀
             List<String> suffixes = fileType.getSuffixes();
             if (suffixes != null && !suffixes.isEmpty()) {
-                wrapper.and(FILE_INFO.IS_DIR.eq(CommonConstant.N))
+                wrapper.and(FILE_INFO.IS_DIR.eq(false))
                         .and(FILE_INFO.SUFFIX.in(suffixes));
             }
         }

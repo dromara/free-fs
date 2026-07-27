@@ -1,6 +1,5 @@
 package com.xddcodec.fs.system.service.impl;
 
-import cn.dev33.satoken.secure.SaSecureUtil;
 import cn.dev33.satoken.stp.StpUtil;
 import cn.hutool.core.io.FileUtil;
 import cn.hutool.core.util.RandomUtil;
@@ -19,6 +18,7 @@ import com.xddcodec.fs.system.domain.SysUser;
 import com.xddcodec.fs.system.domain.dto.*;
 import com.xddcodec.fs.system.domain.vo.SysUserVO;
 import com.xddcodec.fs.system.mapper.SysUserMapper;
+import com.xddcodec.fs.system.auth.PasswordHashService;
 import com.xddcodec.fs.system.service.SysUserService;
 import com.xddcodec.fs.system.service.SysUserTransferSettingService;
 import com.xddcodec.fs.system.service.SysWorkspaceInvitationService;
@@ -35,6 +35,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.Objects;
+import java.util.Locale;
 
 import static com.xddcodec.fs.system.domain.table.SysUserTableDef.SYS_USER;
 
@@ -61,6 +62,8 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
     private final SysWorkspaceInvitationService workspaceInvitationService;
 
     private final StoragePluginManager pluginManager;
+
+    private final PasswordHashService passwordHashService;
 
     @Value("${spring.application.name:free-fs}")
     private String applicationName;
@@ -102,8 +105,8 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
         }
         user = new SysUser();
         user.setUsername(cmd.getUsername());
-        user.setPassword(SaSecureUtil.sha256(cmd.getPassword()));
-        user.setEmail(cmd.getEmail());
+        user.setPassword(passwordHashService.encode(cmd.getPassword()));
+        user.setEmail(cmd.getEmail().trim().toLowerCase(Locale.ROOT));
         user.setNickname(cmd.getNickname());
         user.setAvatar(cmd.getAvatar());
         this.save(user);
@@ -132,20 +135,23 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
 
     @Override
     public void sendUpdateMailCode(String mail) {
+        String normalizedMail = mail.trim().toLowerCase(Locale.ROOT);
+        enforceVerificationCodeRateLimit("updateMail", normalizedMail);
+
         String userId = StpUtil.getLoginIdAsString();
         SysUser user = this.getById(userId);
         if (user == null) {
             throw new BusinessException(I18nUtils.getMessage("user.not.exist"));
         }
-        SysUser existUser = this.getOne(new QueryWrapper().where(SYS_USER.EMAIL.eq(mail)));
+        SysUser existUser = this.getOne(new QueryWrapper().where(SYS_USER.EMAIL.eq(normalizedMail)));
         if (existUser != null && !existUser.getId().equals(user.getId())) {
             throw new BusinessException(I18nUtils.getMessage("user.email.exists"));
         }
         String code = RandomUtil.randomNumbers(CommonConstant.VERIFY_CODE_LENGTH);
-        String redisKey = RedisKey.getUpdateMailKey(mail);
+        String redisKey = RedisKey.getUpdateMailKey(normalizedMail);
         redisRepository.setExpire(redisKey, code, RedisKey.VERIFY_CODE_EXPIRE_SECONDS);
 
-        Mail mailObj = Mail.buildVerifyCodeMail(mail, user.getNickname(), code);
+        Mail mailObj = Mail.buildVerifyCodeMail(normalizedMail, user.getNickname(), code);
         eventPublisher.publishEvent(new MailEvent(this, mailObj));
     }
 
@@ -156,7 +162,7 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
         if (user == null) {
             throw new BusinessException(I18nUtils.getMessage("user.not.exist"));
         }
-        String email = cmd.getEmail();
+        String email = cmd.getEmail().trim().toLowerCase(Locale.ROOT);
         SysUser existUser = this.getOne(new QueryWrapper().where(SYS_USER.EMAIL.eq(email)));
         if (existUser != null && !existUser.getId().equals(user.getId())) {
             throw new BusinessException(I18nUtils.getMessage("user.email.exists"));
@@ -168,8 +174,9 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
             throw new BusinessException(I18nUtils.getMessage("user.verification.code.incorrect"));
         }
 
-        user.setEmail(cmd.getEmail());
+        user.setEmail(email);
         this.updateById(user);
+        redisRepository.del(redisKey);
 
         Cache userCache = cacheManager.getCache("user");
         if (userCache != null) {
@@ -221,13 +228,13 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
         if (user == null) {
             throw new BusinessException(I18nUtils.getMessage("user.not.exist"));
         }
-        if (!user.getPassword().equals(SaSecureUtil.sha256(cmd.getOldPassword()))) {
+        if (!passwordHashService.matches(cmd.getOldPassword(), user.getPassword())) {
             throw new BusinessException(I18nUtils.getMessage("user.password.incorrect"));
         }
         if (!cmd.getNewPassword().equals(cmd.getConfirmPassword())) {
             throw new BusinessException(I18nUtils.getMessage("user.password.not.match"));
         }
-        user.setPassword(SaSecureUtil.sha256(cmd.getNewPassword()));
+        user.setPassword(passwordHashService.encode(cmd.getNewPassword()));
         this.updateById(user);
     }
 
@@ -238,49 +245,69 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
         if (user == null) {
             throw new BusinessException(I18nUtils.getMessage("user.not.exist"));
         }
+        if (user.getPassword() != null && !user.getPassword().isBlank()) {
+            throw new BusinessException(I18nUtils.getMessage("user.password.already.set"));
+        }
         if (!cmd.getNewPassword().equals(cmd.getConfirmPassword())) {
             throw new BusinessException(I18nUtils.getMessage("user.password.not.match"));
         }
-        user.setPassword(SaSecureUtil.sha256(cmd.getNewPassword()));
+        user.setPassword(passwordHashService.encode(cmd.getNewPassword()));
         this.updateById(user);
     }
 
     @Override
     public void sendForgetPasswordCode(String email) {
-        SysUser user = this.getOne(new QueryWrapper().where(SYS_USER.EMAIL.eq(email)));
+        String normalizedEmail = email.trim().toLowerCase(Locale.ROOT);
+        enforceVerificationCodeRateLimit("forgetPassword", normalizedEmail);
+
+        SysUser user = this.getOne(new QueryWrapper().where(SYS_USER.EMAIL.eq(normalizedEmail)));
         if (user == null) {
-            throw new BusinessException(I18nUtils.getMessage("user.not.exist"));
+            // 对不存在的账号同样返回成功，避免泄露账号是否已注册。
+            return;
         }
         String code = RandomUtil.randomNumbers(CommonConstant.VERIFY_CODE_LENGTH);
-        String redisKey = RedisKey.getForgetPasswordKey(email);
+        String redisKey = RedisKey.getForgetPasswordKey(normalizedEmail);
         redisRepository.setExpire(redisKey, code, RedisKey.VERIFY_CODE_EXPIRE_SECONDS);
 
-        Mail mail = Mail.buildVerifyCodeMail(email, user.getNickname(), code);
+        Mail mail = Mail.buildVerifyCodeMail(normalizedEmail, user.getNickname(), code);
         eventPublisher.publishEvent(new MailEvent(this, mail));
     }
 
     @Override
     public void updateForgetPassword(PasswordForgetEditCmd cmd) {
-        String email = cmd.getMail();
-        SysUser user = this.getOne(new QueryWrapper().where(SYS_USER.EMAIL.eq(email)));
-        if (user == null) {
-            throw new BusinessException(I18nUtils.getMessage("user.not.exist"));
-        }
+        String email = cmd.getMail().trim().toLowerCase(Locale.ROOT);
         String code = cmd.getCode();
         String redisKey = RedisKey.getForgetPasswordKey(email);
         String redisCode = (String) redisRepository.get(redisKey);
         if (!code.equals(redisCode)) {
             throw new BusinessException(I18nUtils.getMessage("user.verification.code.incorrect"));
         }
+        SysUser user = this.getOne(new QueryWrapper().where(SYS_USER.EMAIL.eq(email)));
+        if (user == null) {
+            throw new BusinessException(I18nUtils.getMessage("user.verification.code.incorrect"));
+        }
         if (!cmd.getNewPassword().equals(cmd.getConfirmPassword())) {
             throw new BusinessException(I18nUtils.getMessage("user.password.not.match"));
         }
-        user.setPassword(SaSecureUtil.sha256(cmd.getNewPassword()));
+        user.setPassword(passwordHashService.encode(cmd.getNewPassword()));
         this.updateById(user);
+        redisRepository.del(redisKey);
 
         Cache userCache = cacheManager.getCache("user");
         if (userCache != null) {
             userCache.evict(user.getId());
+        }
+    }
+
+    private void enforceVerificationCodeRateLimit(String scene, String email) {
+        String rateLimitKey = RedisKey.getVerifyCodeRateLimitKey(scene, email);
+        Boolean acquired = redisRepository.setIfAbsent(
+                rateLimitKey,
+                "1",
+                RedisKey.VERIFY_CODE_SEND_INTERVAL_SECONDS
+        );
+        if (!Boolean.TRUE.equals(acquired)) {
+            throw new BusinessException(I18nUtils.getMessage("user.verification.code.too.frequent"));
         }
     }
 }

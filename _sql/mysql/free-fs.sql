@@ -19,7 +19,7 @@ CREATE TABLE `file_info`  (
   `is_dir` tinyint(1) NOT NULL COMMENT '是否目录',
   `parent_id` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL DEFAULT NULL COMMENT '父节点ID',
   `user_id` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT '用户id',
-  `content_md5` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL COMMENT '用于秒传和文件校验',
+  `content_md5` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL DEFAULT NULL COMMENT '用于秒传和文件校验',
   `storage_platform_setting_id` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL DEFAULT NULL COMMENT '存储平台标识符',
   `upload_time` datetime NOT NULL COMMENT '上传时间',
   `update_time` datetime NULL DEFAULT NULL COMMENT '修改时间',
@@ -27,7 +27,9 @@ CREATE TABLE `file_info`  (
   `is_deleted` tinyint(1) NULL DEFAULT NULL COMMENT '软删除标记，回收站标识0：未删除 1：已删除',
   `deleted_time` datetime NULL DEFAULT NULL COMMENT '删除时间',
   PRIMARY KEY (`id`) USING BTREE,
-  INDEX `idx_recycle_query`(`user_id` ASC, `storage_platform_setting_id` ASC, `is_deleted` ASC, `parent_id` ASC) USING BTREE
+  INDEX `idx_recycle_query`(`user_id` ASC, `storage_platform_setting_id` ASC, `is_deleted` ASC, `parent_id` ASC) USING BTREE,
+  INDEX `idx_file_content_dedup`(`storage_platform_setting_id` ASC, `content_md5` ASC, `size` ASC, `is_dir` ASC) USING BTREE,
+  INDEX `idx_file_object_reference`(`storage_platform_setting_id` ASC, `object_key` ASC) USING BTREE
 ) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci COMMENT = '文件资源表' ROW_FORMAT = DYNAMIC;
 
 -- ----------------------------
@@ -319,5 +321,31 @@ CREATE TABLE `user_subscription`  (
 -- ----------------------------
 -- Records of user_subscription
 -- ----------------------------
+
+-- ----------------------------
+-- Table structure for sys_operation_log
+-- ----------------------------
+DROP TABLE IF EXISTS `sys_operation_log`;
+CREATE TABLE `sys_operation_log` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `operator_id` varchar(128) DEFAULT NULL COMMENT '操作人ID',
+  `operator_name` varchar(128) DEFAULT NULL COMMENT '操作人名称',
+  `workspace_id` varchar(128) DEFAULT NULL COMMENT '工作空间ID',
+  `operation_type` varchar(64) NOT NULL COMMENT '操作类型',
+  `operation_name` varchar(128) NOT NULL COMMENT '操作名称',
+  `target_type` varchar(32) DEFAULT NULL COMMENT '目标类型',
+  `target_id` varchar(128) DEFAULT NULL COMMENT '目标ID',
+  `target_name` varchar(255) DEFAULT NULL COMMENT '目标名称',
+  `detail` text COMMENT '操作详情',
+  `operation_ip` varchar(50) DEFAULT NULL COMMENT '客户端IP',
+  `user_agent` varchar(512) DEFAULT NULL COMMENT 'User-Agent',
+  `status` tinyint NOT NULL DEFAULT 0 COMMENT '0成功 1失败',
+  `error_message` varchar(512) DEFAULT NULL COMMENT '失败原因',
+  `operation_time` datetime NOT NULL COMMENT '操作时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_operation_workspace_time` (`workspace_id`, `operation_time`),
+  KEY `idx_operation_operator_time` (`operator_id`, `operation_time`),
+  KEY `idx_operation_type_time` (`operation_type`, `operation_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='工作空间操作日志';
 
 SET FOREIGN_KEY_CHECKS = 1;

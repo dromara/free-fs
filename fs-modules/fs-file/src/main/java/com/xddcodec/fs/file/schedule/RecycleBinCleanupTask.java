@@ -5,7 +5,6 @@ import com.mybatisflex.core.query.QueryWrapper;
 import com.xddcodec.fs.file.domain.FileInfo;
 import com.xddcodec.fs.file.service.FileInfoService;
 import com.xddcodec.fs.file.service.FileRecycleService;
-import com.xddcodec.fs.framework.common.constant.CommonConstant;
 import com.xddcodec.fs.framework.common.context.WorkspaceContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -79,7 +78,7 @@ public class RecycleBinCleanupTask {
 
     private List<FileInfo> findExpiredFiles(LocalDateTime expireTime) {
         QueryWrapper queryWrapper = QueryWrapper.create()
-                .where(FILE_INFO.IS_DELETED.eq(CommonConstant.Y))
+                .where(FILE_INFO.IS_DELETED.eq(true))
                 .and(FILE_INFO.DELETED_TIME.lt(expireTime))
                 .orderBy(FILE_INFO.DELETED_TIME.asc());
         return fileInfoService.list(queryWrapper);

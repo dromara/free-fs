@@ -74,6 +74,28 @@
             background: var(--color-fill-2);
         }
 
+        .nav-btn {
+            position: fixed;
+            top: 50%;
+            transform: translateY(-50%);
+            z-index: 120;
+            width: 52px;
+            height: 72px;
+            border: 0;
+            border-radius: 10px;
+            background: rgba(255,255,255,0.1);
+            color: #fff;
+            font-size: 42px;
+            line-height: 1;
+            cursor: pointer;
+            backdrop-filter: blur(8px);
+            transition: background 0.2s, opacity 0.2s;
+        }
+        .nav-btn:hover { background: rgba(255,255,255,0.22); }
+        .nav-btn.prev { left: 24px; }
+        .nav-btn.next { right: 24px; }
+        .nav-btn:disabled { opacity: 0; pointer-events: none; }
+
         #video-container {
             /* flex: 1 会自动占据除去 header 后的所有剩余高度 */
             flex: 1;
@@ -147,7 +169,7 @@
         }
     </style>
 </head>
-<body>
+<body th:attr="data-file-id=${fileId}">
 <div class="header">
     <span class="file-name" th:text="${fileName}">视频文件名</span>
     <div class="close-btn" onclick="window.close()" title="关闭">
@@ -157,6 +179,9 @@
         </svg>
     </div>
 </div>
+
+<button id="preview-prev" class="nav-btn prev" type="button" title="上一个（←）" onclick="navigatePreview(-1)">‹</button>
+<button id="preview-next" class="nav-btn next" type="button" title="下一个（→）" onclick="navigatePreview(1)">›</button>
 
 <div id="video-container">
     <div class="loading-container" id="loading">
@@ -240,5 +265,6 @@
         loadVideo();
     }
 </script>
+<script src="/lib/preview-navigation.js"></script>
 </body>
 </html>

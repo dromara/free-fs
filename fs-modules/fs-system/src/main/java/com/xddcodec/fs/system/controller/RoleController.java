@@ -3,6 +3,8 @@ package com.xddcodec.fs.system.controller;
 import cn.dev33.satoken.annotation.SaCheckPermission;
 import com.xddcodec.fs.framework.common.context.WorkspaceContext;
 import com.xddcodec.fs.framework.common.domain.Result;
+import com.xddcodec.fs.log.constant.OperationType;
+import com.xddcodec.fs.log.service.SysOperationLogService;
 import com.xddcodec.fs.system.domain.dto.CreateCustomRoleCmd;
 import com.xddcodec.fs.system.domain.dto.UpdateCustomRoleCmd;
 import com.xddcodec.fs.system.domain.vo.SysRoleVO;
@@ -24,6 +26,7 @@ import java.util.List;
 public class RoleController {
 
     private final SysRoleService sysRoleService;
+    private final SysOperationLogService operationLogService;
 
     @Operation(summary = "根据工作区获取角色列表")
     @GetMapping("/list")
@@ -47,7 +50,16 @@ public class RoleController {
     @SaCheckPermission("member:manage")
     public Result<SysRoleVO> createCustom(@Valid @RequestBody CreateCustomRoleCmd cmd) {
         String workspaceId = WorkspaceContext.getWorkspaceId();
-        return Result.ok(sysRoleService.createCustomRole(workspaceId, cmd));
+        SysRoleVO role = sysRoleService.createCustomRole(workspaceId, cmd);
+        operationLogService.recordSuccess(
+                OperationType.CREATE_ROLE,
+                "创建角色",
+                "ROLE",
+                String.valueOf(role.getId()),
+                role.getRoleName(),
+                "权限数: " + cmd.getPermissions().size()
+        );
+        return Result.ok(role);
     }
 
     @Operation(summary = "更新自定义角色")
@@ -57,7 +69,16 @@ public class RoleController {
             @PathVariable Long id,
             @Valid @RequestBody UpdateCustomRoleCmd cmd) {
         String workspaceId = WorkspaceContext.getWorkspaceId();
-        return Result.ok(sysRoleService.updateCustomRole(workspaceId, id, cmd));
+        SysRoleVO role = sysRoleService.updateCustomRole(workspaceId, id, cmd);
+        operationLogService.recordSuccess(
+                OperationType.UPDATE_ROLE,
+                "更新角色",
+                "ROLE",
+                String.valueOf(id),
+                role.getRoleName(),
+                "权限数: " + cmd.getPermissions().size()
+        );
+        return Result.ok(role);
     }
 
     @Operation(summary = "删除自定义角色")
@@ -65,7 +86,16 @@ public class RoleController {
     @SaCheckPermission("member:manage")
     public Result<Void> deleteCustom(@PathVariable Long id) {
         String workspaceId = WorkspaceContext.getWorkspaceId();
+        SysRoleVO role = sysRoleService.getRoleDetail(workspaceId, id);
         sysRoleService.deleteCustomRole(workspaceId, id);
+        operationLogService.recordSuccess(
+                OperationType.DELETE_ROLE,
+                "删除角色",
+                "ROLE",
+                String.valueOf(id),
+                role.getRoleName(),
+                null
+        );
         return Result.ok();
     }
 }

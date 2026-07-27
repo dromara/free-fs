@@ -38,7 +38,7 @@
         <!-- 插件版本 -->
         <maven-jar-plugin.version>3.2.2</maven-jar-plugin.version>
         <maven-war-plugin.version>3.2.2</maven-war-plugin.version>
-        <maven-compiler-plugin.verison>3.13.0</maven-compiler-plugin.verison>
+        <maven-compiler-plugin.verison>3.11.0</maven-compiler-plugin.verison>
         <flatten-maven-plugin.version>1.2.7</flatten-maven-plugin.version>
     </properties>
 

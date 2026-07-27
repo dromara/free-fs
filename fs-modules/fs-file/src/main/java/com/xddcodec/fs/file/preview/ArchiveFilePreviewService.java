@@ -3,6 +3,7 @@ package com.xddcodec.fs.file.preview;
 import com.xddcodec.fs.file.domain.FileInfo;
 import com.xddcodec.fs.file.service.FileInfoService;
 import com.xddcodec.fs.framework.common.constant.RedisKey;
+import com.xddcodec.fs.framework.common.context.WorkspaceContext;
 import com.xddcodec.fs.framework.common.enums.FileTypeEnum;
 import com.xddcodec.fs.framework.common.utils.I18nUtils;
 import com.xddcodec.fs.framework.preview.config.FilePreviewConfig;
@@ -87,7 +88,7 @@ public class ArchiveFilePreviewService {
             }
 
             Long maxFileSize = previewConfig.getMaxFileSize();
-            if (maxFileSize != null && fileContent.length > maxFileSize) {
+            if (maxFileSize != null && maxFileSize > 0 && fileContent.length > maxFileSize) {
                 return buildErrorPage(model, I18nUtils.getMessage("file.too.large"),
                         I18nUtils.getMessage("file.size.limit.exceeded", 
                                 new Object[]{maxFileSize / 1024 / 1024}));
@@ -110,8 +111,13 @@ public class ArchiveFilePreviewService {
             // 每次内层预览单独签发流 token，避免共用 previewToken+:stream 覆盖 Redis 导致多窗口 403/串文件
             String streamAccessToken = UUID.randomUUID().toString().replace("-", "");
             redisRepository.setExpire(RedisKey.getPreviewTokenKey(streamAccessToken), tempId, CACHE_EXPIRE_SECONDS);
+            redisRepository.setExpire(
+                    RedisKey.getPreviewWorkspaceKey(streamAccessToken),
+                    WorkspaceContext.getWorkspaceId(),
+                    CACHE_EXPIRE_SECONDS
+            );
 
-            String streamUrl = previewConfig.getStreamApi() + "/archive/inner/" + tempId
+            String streamUrl = "/api/file/stream/preview/archive/inner/" + tempId
                     + "?previewToken=" + streamAccessToken;
 
             PreviewContext context = PreviewContext.builder()

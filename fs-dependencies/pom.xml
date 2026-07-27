@@ -13,7 +13,7 @@
     <description>基础 bom 文件，管理整个项目的依赖版本</description>
 
     <properties>
-        <revision>2.2.2</revision>
+        <revision>2.3.1</revision>
         <flatten-maven-plugin.version>1.6.0</flatten-maven-plugin.version>
 
         <spring-boot.version>4.0.3</spring-boot.version>

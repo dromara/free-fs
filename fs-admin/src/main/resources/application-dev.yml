@@ -1,9 +1,9 @@
 spring:
   datasource:
     type: com.zaxxer.hikari.HikariDataSource
-    url: jdbc:mysql://192.168.85.128:3306/free-fs?useUnicode=true&characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&useSSL=true&serverTimezone=GMT%2B8&autoReconnect=true&rewriteBatchedStatements=true
+    url: jdbc:mysql://127.0.0.1:3306/free-fs?useUnicode=true&characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&useSSL=true&serverTimezone=GMT%2B8&autoReconnect=true&rewriteBatchedStatements=true
     username: root
-    password: Lwz102466
+    password: root
     driver-class-name: com.mysql.cj.jdbc.Driver
     # postgresql数据库配置
 #    url: jdbc:postgresql://127.0.0.1:5432/free-fs?useUnicode=true&characterEncoding=utf8&useSSL=true&autoReconnect=true&reWriteBatchedInserts=true
@@ -30,9 +30,9 @@ spring:
       keepaliveTime: 30000
   data:
     redis:
-      host: 192.168.85.128
+      host: 127.0.0.1
       port: 6379
-      password: Lwz102466
+      password: 123456
       database: 0
       # 连接超时时间
       timeout: 10s

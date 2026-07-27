@@ -29,10 +29,17 @@ public class SysUserTransferSettingServiceImpl extends ServiceImpl<SysUserTransf
     }
 
     @Override
-    @Cacheable(value = "userTransferSetting", keyGenerator = "userKeyGenerator")
+    @Cacheable(value = "userTransferSetting", keyGenerator = "userKeyGenerator", unless = "#result == null")
     public SysUserTransferSetting getByUser() {
         String userId = StpUtil.getLoginIdAsString();
-        return this.getOne(new QueryWrapper().where(SYS_USER_TRANSFER_SETTING.USER_ID.eq(userId)));
+        SysUserTransferSetting transferSetting = this.getOne(
+                new QueryWrapper().where(SYS_USER_TRANSFER_SETTING.USER_ID.eq(userId))
+        );
+        if (transferSetting == null) {
+            transferSetting = SysUserTransferSetting.init(userId);
+            this.save(transferSetting);
+        }
+        return transferSetting;
     }
 
     @Override
@@ -67,7 +74,9 @@ public class SysUserTransferSettingServiceImpl extends ServiceImpl<SysUserTransf
 
     @Override
     public Long getChunkSize(String userId) {
-        SysUserTransferSetting setting = getByUser();
+        SysUserTransferSetting setting = this.getOne(
+                new QueryWrapper().where(SYS_USER_TRANSFER_SETTING.USER_ID.eq(userId))
+        );
         if (setting != null && setting.getChunkSize() != null && setting.getChunkSize() > 0) {
             return setting.getChunkSize();
         }

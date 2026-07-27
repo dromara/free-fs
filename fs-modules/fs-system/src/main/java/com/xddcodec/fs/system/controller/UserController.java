@@ -102,7 +102,7 @@ public class UserController {
 
     @Operation(summary = "获取用户传输配置")
     @GetMapping("/transfer/setting")
-    public Result<SysUserTransferSetting> sendForgetPasswordCode() {
+    public Result<SysUserTransferSetting> getUserTransferSetting() {
         SysUserTransferSetting userTransferSetting = userTransferSettingService.getByUser();
         return Result.ok(userTransferSetting);
     }
